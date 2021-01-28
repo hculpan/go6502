@@ -1,7 +1,9 @@
 package screen
 
 import (
-	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hculpan/go6502/keyboard"
@@ -10,7 +12,15 @@ import (
 	"github.com/veandco/go-sdl2/ttf"
 )
 
-const escapeMaxLength = 3
+const escapeMaxLength = 10
+
+var numMatcher *regexp.Regexp = regexp.MustCompile("[0-9]+")
+
+type escapeCode struct {
+	Code    string
+	Matcher *regexp.Regexp
+	Action  func(s *Screen, m *regexp.Regexp, escapeSequence string)
+}
 
 // Screen represents the main object to display text output
 type Screen struct {
@@ -31,6 +41,7 @@ type Screen struct {
 
 	escapeMode     bool
 	escapeSequence string
+	escapeCodes    []escapeCode
 
 	done                chan bool
 	cursorNextSequence  bool
@@ -103,6 +114,143 @@ func (s *Screen) initializeSymbols() error {
 	return nil
 }
 
+func findFirstNumber(s string, def int) int {
+	numStr := numMatcher.FindString(s)
+	result, err := strconv.Atoi(numStr)
+	if err != nil {
+		result = def
+	}
+	return result
+}
+
+func findTwoNumbers(s string, def int) (int, int) {
+	strs := strings.Split(s, ";")
+	if len(strs) != 2 {
+		return def, def
+	}
+	n1 := findFirstNumber(strs[0], def)
+	n2 := findFirstNumber(strs[1], def)
+	return n1, n2
+}
+
+func (s *Screen) initEscapeCodes() {
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[D",
+			Matcher: regexp.MustCompile(`\[D`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				s.scrollDisplayUp()
+				s.cursor.ClearScroll()
+			},
+		},
+	)
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[M",
+			Matcher: regexp.MustCompile(`\[M`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				s.scrollDisplayDown()
+				s.cursor.ClearScroll()
+			},
+		},
+	)
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[H",
+			Matcher: regexp.MustCompile(`\[H`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				s.cursor.X = 0
+				s.cursor.Y = 0
+				s.cursor.ClearScroll()
+			},
+		},
+	)
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[H",
+			Matcher: regexp.MustCompile(`\[2J`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				for i := range s.videoRAM {
+					s.videoRAM[i] = 0
+				}
+			},
+		},
+	)
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[<n>A",
+			Matcher: regexp.MustCompile(`\[[0-9]+A`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				n := findFirstNumber(s.escapeSequence, 0)
+				for i := 0; i < n; i++ {
+					s.cursor.Y--
+				}
+				if s.cursor.Y < 0 {
+					s.cursor.Y = 0
+				}
+			},
+		},
+	)
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[<n>B",
+			Matcher: regexp.MustCompile(`\[[0-9]+B`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				n := findFirstNumber(s.escapeSequence, 0)
+				for i := 0; i < n; i++ {
+					s.cursor.Y++
+				}
+				if s.cursor.Y >= s.textRows {
+					s.cursor.Y = s.textRows - 1
+				}
+			},
+		},
+	)
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[<n>C",
+			Matcher: regexp.MustCompile(`\[[0-9]+C`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				n := findFirstNumber(s.escapeSequence, 0)
+				for i := 0; i < n; i++ {
+					s.cursor.X++
+				}
+				if s.cursor.X >= s.textCols {
+					s.cursor.X = s.textCols - 1
+				}
+			},
+		},
+	)
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[<n>D",
+			Matcher: regexp.MustCompile(`\[[0-9]+D`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				n := findFirstNumber(s.escapeSequence, 0)
+				for i := 0; i < n; i++ {
+					s.cursor.X--
+				}
+				if s.cursor.X < 0 {
+					s.cursor.X = 0
+				}
+			},
+		},
+	)
+	s.escapeCodes = append(s.escapeCodes,
+		escapeCode{
+			Code:    "[<n>;<n>H",
+			Matcher: regexp.MustCompile(`\[[0-9]+;[0-9]+H`),
+			Action: func(s *Screen, m *regexp.Regexp, escapeSequence string) {
+				n1, n2 := findTwoNumbers(escapeSequence, -1)
+				if n1 >= 0 && n1 < s.textCols && n2 >= 0 && n2 < s.textRows {
+					s.cursor.X = n1
+					s.cursor.Y = n2
+				}
+			},
+		},
+	)
+}
+
 func (s *Screen) initializeFontStuff() error {
 	// Load data from bindata in resources/resources.go
 	data, err := resources.Asset("resources/OldComputerManualMonospaced-KmlZ.ttf")
@@ -110,13 +258,11 @@ func (s *Screen) initializeFontStuff() error {
 		return err
 	}
 
-	fmt.Println("data=", len(data))
 	rwops, err := sdl.RWFromMem(data)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println(rwops)
 	font, err := ttf.OpenFontRW(rwops, 1, 24)
 	if err != nil {
 		return err
@@ -165,6 +311,8 @@ func (s *Screen) Show() error {
 
 	s.initializeSymbols()
 
+	s.initEscapeCodes()
+
 	ticker := time.NewTicker(50 * time.Millisecond)
 	s.done = make(chan bool)
 
@@ -189,52 +337,17 @@ func (s *Screen) Show() error {
 
 func (s *Screen) matchesEscapeCode(r rune) {
 	s.escapeSequence += string(r)
-	switch s.escapeSequence {
-	case "[1A":
-		s.cursor.Y--
-		if s.cursor.Y < 0 {
-			s.cursor.Y = 0
-		}
-		s.escapeMode = false
-	case "[1B":
-		s.cursor.NextLine()
-		s.escapeMode = false
-	case "[1C":
-		s.cursor.X++
-		if s.cursor.X == s.textCols {
-			s.cursor.X = s.textCols - 1
-		}
-		s.escapeMode = false
-	case "[1D":
-		s.cursor.X--
-		if s.cursor.X < 0 {
-			s.cursor.X = 0
-		}
-		s.escapeMode = false
-	case "[D":
-		s.scrollDisplayUp()
-		s.cursor.ClearScroll()
-		s.escapeMode = false
-	case "[M":
-		s.scrollDisplayDown()
-		s.cursor.ClearScroll()
-		s.escapeMode = false
-	case "[H":
-		s.cursor.X = 0
-		s.cursor.Y = 0
-		s.cursor.ClearScroll()
-		s.escapeMode = false
-	case "[2J":
-		for i := range s.videoRAM {
-			s.videoRAM[i] = 0
-		}
-		s.escapeMode = false
-	default:
-		if len(s.escapeSequence) > escapeMaxLength {
+	for _, v := range s.escapeCodes {
+		if v.Matcher.MatchString(s.escapeSequence) {
+			v.Action(s, v.Matcher, s.escapeSequence)
 			s.escapeMode = false
-			s.escapeSequence = ""
 		}
 	}
+
+	if s.escapeMode && len(s.escapeSequence) > escapeMaxLength {
+		s.escapeMode = false
+	}
+
 }
 
 func (s *Screen) calculateScreenLocationFromIndex(i int) (int, int) {

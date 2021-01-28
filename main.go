@@ -97,6 +97,8 @@ func main() {
 					sendEscSequence("[1C", scr)
 				case sdl.K_LEFT:
 					sendEscSequence("[1D", scr)
+				case sdl.K_END:
+					sendEscSequence("[40;13H", scr)
 				case sdl.K_ESCAPE:
 					return
 				default:
