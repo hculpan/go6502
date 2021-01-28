@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hculpan/go6502/keyboard"
+	"github.com/hculpan/go6502/resources"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
 )
@@ -103,7 +104,20 @@ func (s *Screen) initializeSymbols() error {
 }
 
 func (s *Screen) initializeFontStuff() error {
-	font, err := ttf.OpenFont("OldComputerManualMonospaced-KmlZ.ttf", 24)
+	// Load data from bindata in resources/resources.go
+	data, err := resources.Asset("resources/OldComputerManualMonospaced-KmlZ.ttf")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("data=", len(data))
+	rwops, err := sdl.RWFromMem(data)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(rwops)
+	font, err := ttf.OpenFontRW(rwops, 1, 24)
 	if err != nil {
 		return err
 	}
@@ -117,20 +131,17 @@ func (s *Screen) initializeFontStuff() error {
 }
 
 // Show initializes the main screen and shows it
-func (s *Screen) Show() {
+func (s *Screen) Show() error {
 	if err := sdl.Init(sdl.INIT_EVERYTHING); err != nil {
-		fmt.Println("Initializing SDL: ", err)
-		return
+		return err
 	}
 
 	if err := ttf.Init(); err != nil {
-		fmt.Println("Initializing SDL: ", err)
-		return
+		return err
 	}
 
 	if err := s.initializeFontStuff(); err != nil {
-		fmt.Println("Initializing font stuff: ", err)
-		return
+		return err
 	}
 
 	window, err := sdl.CreateWindow(
@@ -142,15 +153,13 @@ func (s *Screen) Show() {
 		sdl.WINDOW_OPENGL,
 	)
 	if err != nil {
-		fmt.Println("Initializing window: ", err)
-		return
+		return err
 	}
 	s.window = window
 
 	renderer, err := sdl.CreateRenderer(s.window, -1, sdl.RENDERER_ACCELERATED)
 	if err != nil {
-		fmt.Println("Initializing renderer: ", err)
-		return
+		return err
 	}
 	s.renderer = renderer
 
@@ -174,6 +183,8 @@ func (s *Screen) Show() {
 			}
 		}
 	}()
+
+	return nil
 }
 
 func (s *Screen) matchesEscapeCode(r rune) {
