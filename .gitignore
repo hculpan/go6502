@@ -5,6 +5,10 @@
 *.so
 *.dylib
 
+# For assembly programs
+*.bin  
+*.lst
+
 # Test binary, built with `go test -c`
 *.test
 

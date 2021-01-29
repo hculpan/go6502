@@ -1,0 +1,25 @@
+  .org $0000
+  .byte $00
+
+  .org $200
+loop_start:
+  lda num1
+  jsr add_num
+  sta num1
+
+loop_end:
+  jmp loop_start
+
+num1:
+  .byte $A1
+num2:
+  .byte $10
+
+add_num:
+  adc num2
+  rts
+
+; End of rom  
+  .org $FFFC
+  .word $9000
+  .word $0000

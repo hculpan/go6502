@@ -1,0 +1,117 @@
+  .target "65C02"
+  .format "bin"
+
+PORTB .equ $6000
+PORTA .equ $6001
+
+DDRB .equ $6002
+DDRA .equ $6003
+
+E  .equ %10000000
+RW .equ %01000000
+RS .equ %00100000
+
+; needed to make 32k rom
+  .org $8000
+
+  jmp setup
+
+; Data
+message:
+  .textz " Hello, I am the                            Kabputer"
+
+setup:
+  ldx #$FF
+  txs
+
+  lda #%11111111  ; Initalize PORTB to all output
+  sta DDRB
+
+  lda #%11100000  ; Initalize just top 3 PORTA to output
+  sta DDRA
+
+  lda #%00111000  ; Set 8-bit mode, 2 line display, 5x8 font
+  jsr lcd_instruction
+
+  lda #%00001110  ; Set display on, cursor on, blink off
+  jsr lcd_instruction
+
+  lda #%00000110  ; Increment cursor; don't shift display
+  jsr lcd_instruction
+
+  lda #%00000001  ; Clear the display
+  jsr lcd_instruction
+
+  ldx #$00
+
+main_loop:
+  lda message, x
+  beq end_prog_loop
+  jsr print_char
+  inx
+  jmp main_loop
+
+end_prog_loop:
+  jmp end_prog_loop
+
+;--------------------------------------
+; Sends instruction to LCD module
+; Param: Register A with instruction to send
+;--------------------------------------
+lcd_instruction:
+  jsr busy_wait
+  sta PORTB
+  lda #0          ; Clear RS/RW/E bits 
+  sta PORTA
+  lda #E          ; Set Enable bit to send instruction
+  sta PORTA
+  lda #0          ; Clear RS/RW/E bits 
+  sta PORTA
+  rts
+
+;--------------------------------------
+; Prints character to LCD
+; Param: Register A with ASCII of char
+;--------------------------------------
+print_char:
+  jsr busy_wait
+  sta PORTB
+  lda #RS         ; Set RS bit
+  sta PORTA
+  lda #(RS | E)   ; Set Enable and RS bits
+  sta PORTA
+  lda #RS         ; Set RS bit
+  sta PORTA
+  rts
+
+;--------------------------------------
+; Waits for the LCD's busy flag to clear
+; Param: none
+;--------------------------------------
+busy_wait:
+; setup
+  pha
+  lda #%00000000  ; Initalize PORTB to all input
+  sta DDRB
+
+busy_wait_loop:
+  lda #RW         ; Set RW bit
+  sta PORTA
+  lda #(RW | E)   ; Set Enable and RW bits
+  sta PORTA
+  lda PORTB
+  and #%10000000
+  bne busy_wait_loop
+
+; cleanup
+  lda #RW         ; Set RW bit
+  sta PORTA
+  lda #%11111111  ; Initalize PORTB to all output
+  sta DDRB
+  pla
+  rts
+
+; End of rom  
+  .org $FFFC
+  .word $8000
+  .word $0000

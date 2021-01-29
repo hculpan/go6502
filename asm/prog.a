@@ -1,0 +1,25 @@
+; needed to make 32k rom, but code starts at $9000
+    .org $8000
+    .byte $EA
+  
+rom_code_start
+  .org $9000
+
+  ldx #0
+
+loop_start
+  inx
+  jsr load_a
+  jmp loop_start
+
+value
+  .byte $FF
+
+load_a
+  lda value
+  rts
+
+; End of rom  
+  .org $FFFC
+  .word $9000
+  .word $0000
