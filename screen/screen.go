@@ -39,6 +39,8 @@ type Screen struct {
 	charHeight int32
 	charWidth  int32
 
+	Busy bool
+
 	escapeMode     bool
 	escapeSequence string
 	escapeCodes    []escapeCode
@@ -51,6 +53,11 @@ type Screen struct {
 
 	capsLock bool
 	shiftOn  bool
+
+	heightOutputScreen int32
+	widthOutputScreen  int32
+
+	bottomBarTexture *sdl.Texture
 
 	videoRAM []rune
 }
@@ -70,6 +77,7 @@ func NewScreen(cols int, rows int) *Screen {
 		s.videoRAM[i] = 0
 	}
 	s.capsLock = false
+	s.Busy = false
 	s.shiftOn = false
 	return s
 }
@@ -81,6 +89,9 @@ func (s *Screen) CleanUp() {
 		if s.symbols[x] != nil {
 			s.symbols[x].Destroy()
 		}
+	}
+	if s.bottomBarTexture != nil {
+		s.bottomBarTexture.Destroy()
 	}
 	s.font.Close()
 	s.renderer.Destroy()
@@ -131,6 +142,16 @@ func findTwoNumbers(s string, def int) (int, int) {
 	n1 := findFirstNumber(strs[0], def)
 	n2 := findFirstNumber(strs[1], def)
 	return n1, n2
+}
+
+// Reset resets the screen to startup state
+func (s *Screen) Reset() {
+	s.cursor.X = 0
+	s.cursor.Y = 0
+	s.cursor.ClearScroll()
+	for i := range s.videoRAM {
+		s.videoRAM[i] = 0
+	}
 }
 
 func (s *Screen) initEscapeCodes() {
@@ -290,12 +311,15 @@ func (s *Screen) Show() error {
 		return err
 	}
 
+	s.heightOutputScreen = int32((s.fontmetrics.MaxY + s.fontmetrics.Advance) * s.textRows)
+	s.widthOutputScreen = int32((s.fontmetrics.MaxX) * s.textCols)
+
 	window, err := sdl.CreateWindow(
 		"Kabputer",
 		sdl.WINDOWPOS_CENTERED,
 		sdl.WINDOWPOS_CENTERED,
-		int32((s.fontmetrics.MaxX)*s.textCols),
-		int32((s.fontmetrics.MaxY+s.fontmetrics.Advance)*s.textRows),
+		s.widthOutputScreen,
+		s.heightOutputScreen+50,
 		sdl.WINDOW_OPENGL,
 	)
 	if err != nil {
@@ -380,7 +404,64 @@ func (s *Screen) DrawScreen() {
 
 	s.displayCursor()
 
+	if err := s.drawUI(); err != nil {
+		panic(err)
+	}
+
 	s.renderer.Present()
+}
+
+func (s *Screen) drawUI() error {
+	r, g, b, a, _ := s.renderer.GetDrawColor()
+
+	s.renderer.SetDrawColor(128, 128, 128, 128)
+	s.renderer.DrawLine(0, s.heightOutputScreen+1, s.widthOutputScreen, s.heightOutputScreen+1)
+
+	if s.bottomBarTexture == nil {
+		// Load data from bindata in resources/resources.go
+		data, err := resources.Asset("resources/Aileron-Bold.otf")
+		if err != nil {
+			return err
+		}
+
+		rwops, err := sdl.RWFromMem(data)
+		if err != nil {
+			return err
+		}
+
+		font, err := ttf.OpenFontRW(rwops, 1, 24)
+		if err != nil {
+			return err
+		}
+
+		msg := "F2: Start       F3: Reset       F5: Stop       F6: Single step       F7: Resume       F9: Reset/Reload       ESC: Exit"
+		surface, err := font.RenderUTF8Solid(msg, s.foreground)
+		if err != nil {
+			return err
+		}
+		defer surface.Free()
+
+		msgtext, err := s.renderer.CreateTextureFromSurface(surface)
+		if err != nil {
+			return err
+		}
+		s.bottomBarTexture = msgtext
+	}
+
+	_, _, w, h, err := s.bottomBarTexture.Query()
+	if err != nil {
+		return err
+	}
+
+	s.renderer.Copy(
+		s.bottomBarTexture,
+		&sdl.Rect{X: 0, Y: 0, W: w, H: h},
+		&sdl.Rect{X: (s.widthOutputScreen / 2) - (w / 2), Y: s.heightOutputScreen + (25 - (h / 2)), W: w, H: h},
+	)
+
+	s.renderer.SetDrawColor(r, g, b, a)
+
+	return nil
 }
 
 // GetFontWidth returns the width of an individual character
@@ -395,6 +476,7 @@ func (s *Screen) GetFontHeight() int32 {
 
 // ProcessRune processes an ASCII character
 func (s *Screen) ProcessRune(r rune) {
+	s.Busy = true
 	if s.escapeMode {
 		s.matchesEscapeCode(r)
 	} else {
@@ -413,6 +495,7 @@ func (s *Screen) ProcessRune(r rune) {
 			s.displayRune(r)
 		}
 	}
+	s.Busy = false
 }
 
 func (s *Screen) scrollDisplayUp() {

@@ -1,7 +1,4 @@
-  .org $0000
-  .byte $00
-
-  .org $200
+  .org $0200
 loop_start:
   lda num1
   jsr add_num
@@ -11,9 +8,9 @@ loop_end:
   jmp loop_start
 
 num1:
-  .byte $A1
+  .byte $01
 num2:
-  .byte $10
+  .byte $11
 
 add_num:
   adc num2
@@ -21,5 +18,5 @@ add_num:
 
 ; End of rom  
   .org $FFFC
-  .word $9000
+  .word $0200
   .word $0000

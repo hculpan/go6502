@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/ariejan/i6502"
+	"github.com/hculpan/go6502/screen"
 )
 
 // Emulator encapsulates the 6502 computer
@@ -19,14 +20,25 @@ type Emulator struct {
 }
 
 // NewEmulator create a new emulator
-func NewEmulator() *Emulator {
+func NewEmulator(scr *screen.Screen) *Emulator {
 	result := &Emulator{}
 
-	ram1, _ := i6502.NewRam(0x10000) // 64k
-	//	ram2, _ := i6502.NewRam(0x7C00) // 31k
+	ram1, err := i6502.NewRam(0x8000) // 64k
+	if err != nil {
+		panic(err)
+	}
+	scri, err := NewScreenInterface(0x8000, scr)
+	if err != nil {
+		panic(err)
+	}
+	ram2, err := i6502.NewRam(0x7C00) // 31k
+	if err != nil {
+		panic(err)
+	}
 	bus, _ := i6502.NewAddressBus()
 	bus.Attach(ram1, 0x0000)
-	//	bus.Attach(ram2, 0x8400)
+	bus.Attach(scri, 0x8000)
+	bus.Attach(ram2, 0x8400)
 	result.CPU, _ = i6502.NewCpu(bus)
 	result.Active = false
 
@@ -49,7 +61,9 @@ func (e *Emulator) ReadMemory(address uint16) uint8 {
 
 // Terminate terminates the emulator
 func (e *Emulator) Terminate() {
-	e.done <- true
+	if e.Active {
+		e.done <- true
+	}
 }
 
 // EnableSingleStep turns on single stepping through instructions
@@ -91,7 +105,7 @@ func (e *Emulator) StartEmulator(t int64) {
 		for {
 			select {
 			case <-e.done:
-				return
+				break
 			case <-ticker.C:
 				if !e.stepWait {
 					e.CPU.Step()
