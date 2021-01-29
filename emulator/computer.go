@@ -1,7 +1,7 @@
 package emulator
 
 import (
-	"fmt"
+	"time"
 
 	"github.com/ariejan/i6502"
 	"github.com/hculpan/go6502/screen"
@@ -9,21 +9,23 @@ import (
 
 // Emulator encapsulates the 6502 computer
 type Emulator struct {
-	CPU    *i6502.Cpu
-	Active bool
-
+	CPU        *i6502.Cpu
+	Active     bool
+	Key        rune
+	KeyWaiting bool
 	SingleStep bool
 
-	stepWait bool
+	keyboardInterface *KeyboardInterface
 
-	done chan bool
+	stepWait bool
+	done     bool
 }
 
 // NewEmulator create a new emulator
 func NewEmulator(scr *screen.Screen) *Emulator {
 	result := &Emulator{}
 
-	ram1, err := i6502.NewRam(0x8000) // 64k
+	ram1, err := i6502.NewRam(0x8000) // 32k
 	if err != nil {
 		panic(err)
 	}
@@ -35,15 +37,19 @@ func NewEmulator(scr *screen.Screen) *Emulator {
 	if err != nil {
 		panic(err)
 	}
+	result.keyboardInterface = NewKeyboardInterface()
+
 	bus, _ := i6502.NewAddressBus()
 	bus.Attach(ram1, 0x0000)
 	bus.Attach(scri, 0x8000)
+	bus.Attach(result.keyboardInterface, 0x8001)
 	bus.Attach(ram2, 0x8400)
 	result.CPU, _ = i6502.NewCpu(bus)
 	result.Active = false
 
 	result.SingleStep = false
 	result.stepWait = false
+	result.KeyWaiting = false
 
 	return result
 }
@@ -59,10 +65,20 @@ func (e *Emulator) ReadMemory(address uint16) uint8 {
 	return e.CPU.Bus.ReadByte(address)
 }
 
+// SetKeyWaiting sets the next key that is waiting to be
+// read by the emulator
+func (e *Emulator) SetKeyWaiting(k rune) {
+	e.keyboardInterface.Key = k
+	e.keyboardInterface.KeyWaiting = true
+	if e.CPU.P&0b00000100 == 0 {
+		e.CPU.Interrupt()
+	}
+}
+
 // Terminate terminates the emulator
 func (e *Emulator) Terminate() {
 	if e.Active {
-		e.done <- true
+		e.done = true
 	}
 }
 
@@ -94,26 +110,21 @@ func (e *Emulator) StartEmulator() {
 
 	e.CPU.Reset()
 
-	//	ticker := time.NewTicker(time.Duration(t) * time.Microsecond)
-	e.done = make(chan bool)
-
 	go func() {
 		defer func() {
 			e.Active = false
 		}()
 		for {
-			select {
-			case x, _ := <-e.done:
-				fmt.Sprintf("done=%v", x)
+			if e.done {
 				return
-				//			case <-ticker.C:
-			default:
-				if !e.stepWait {
-					e.CPU.Step()
-					if e.SingleStep {
-						e.stepWait = true
-					}
+			}
+
+			if !e.stepWait {
+				e.CPU.Step()
+				if e.SingleStep {
+					e.stepWait = true
 				}
+				time.Sleep(1 * time.Microsecond)
 			}
 		}
 	}()

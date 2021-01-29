@@ -1,0 +1,34 @@
+  .target "65C02"
+  .format "bin"
+
+  .setting "Debug",true
+
+  .org $0200
+  .byte $00
+
+  .org $9000
+
+  cli
+  jmp start
+
+Screen .equ $8000
+Key .equ $8001
+
+start:
+  jmp start
+
+  .org $F000
+key_interrupt:
+  pha
+  lda Key
+  beq end_key 
+  sta Screen
+
+end_key:
+  pla
+  rti
+
+; End of rom  
+  .org $FFFC
+  .word $9000
+  .word key_interrupt

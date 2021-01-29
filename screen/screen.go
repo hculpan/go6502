@@ -1,6 +1,8 @@
 package screen
 
 import (
+	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -57,7 +59,9 @@ type Screen struct {
 	heightOutputScreen int32
 	widthOutputScreen  int32
 
-	bottomBarTexture *sdl.Texture
+	romName            string
+	bottomBarTexture   *sdl.Texture
+	midRightBarTexture *sdl.Texture
 
 	videoRAM []rune
 }
@@ -82,6 +86,15 @@ func NewScreen(cols int, rows int) *Screen {
 	return s
 }
 
+// SetRomName sets the name of the rom being loaded
+func (s *Screen) SetRomName(str string) {
+	s.romName = str
+	if s.midRightBarTexture != nil {
+		s.midRightBarTexture.Destroy()
+		s.midRightBarTexture = nil
+	}
+}
+
 // CleanUp cleans up all the resources creates by the screen object
 func (s *Screen) CleanUp() {
 	s.done <- true
@@ -92,6 +105,9 @@ func (s *Screen) CleanUp() {
 	}
 	if s.bottomBarTexture != nil {
 		s.bottomBarTexture.Destroy()
+	}
+	if s.midRightBarTexture != nil {
+		s.midRightBarTexture.Destroy()
 	}
 	s.font.Close()
 	s.renderer.Destroy()
@@ -319,7 +335,7 @@ func (s *Screen) Show() error {
 		sdl.WINDOWPOS_CENTERED,
 		sdl.WINDOWPOS_CENTERED,
 		s.widthOutputScreen,
-		s.heightOutputScreen+50,
+		s.heightOutputScreen+90,
 		sdl.WINDOW_OPENGL,
 	)
 	if err != nil {
@@ -411,6 +427,37 @@ func (s *Screen) DrawScreen() {
 	s.renderer.Present()
 }
 
+func (s *Screen) createBarTexture(msg string) (*sdl.Texture, error) {
+	// Load data from bindata in resources/resources.go
+	data, err := resources.Asset("resources/Aileron-Bold.otf")
+	if err != nil {
+		return nil, err
+	}
+
+	rwops, err := sdl.RWFromMem(data)
+	if err != nil {
+		return nil, err
+	}
+
+	font, err := ttf.OpenFontRW(rwops, 1, 24)
+	if err != nil {
+		return nil, err
+	}
+
+	surface, err := font.RenderUTF8Solid(msg, s.foreground)
+	if err != nil {
+		return nil, err
+	}
+	defer surface.Free()
+
+	msgtext, err := s.renderer.CreateTextureFromSurface(surface)
+	if err != nil {
+		return nil, err
+	}
+
+	return msgtext, nil
+}
+
 func (s *Screen) drawUI() error {
 	r, g, b, a, _ := s.renderer.GetDrawColor()
 
@@ -418,34 +465,32 @@ func (s *Screen) drawUI() error {
 	s.renderer.DrawLine(0, s.heightOutputScreen+1, s.widthOutputScreen, s.heightOutputScreen+1)
 
 	if s.bottomBarTexture == nil {
-		// Load data from bindata in resources/resources.go
-		data, err := resources.Asset("resources/Aileron-Bold.otf")
+		texture, err := s.createBarTexture("F2: Start       F3: Reset       F5: Stop       F6: Single step       F7: Resume       F9: Reset/Reload       ESC: Exit")
+		if err != nil {
+			return err
+		}
+		s.bottomBarTexture = texture
+	}
+
+	if s.midRightBarTexture == nil && len(s.romName) > 0 {
+		texture, err := s.createBarTexture(fmt.Sprintf("ROM: %s", filepath.Base(s.romName)))
+		if err != nil {
+			return err
+		}
+		s.midRightBarTexture = texture
+	}
+
+	if s.midRightBarTexture != nil {
+		_, _, w, h, err := s.midRightBarTexture.Query()
 		if err != nil {
 			return err
 		}
 
-		rwops, err := sdl.RWFromMem(data)
-		if err != nil {
-			return err
-		}
-
-		font, err := ttf.OpenFontRW(rwops, 1, 24)
-		if err != nil {
-			return err
-		}
-
-		msg := "F2: Start       F3: Reset       F5: Stop       F6: Single step       F7: Resume       F9: Reset/Reload       ESC: Exit"
-		surface, err := font.RenderUTF8Solid(msg, s.foreground)
-		if err != nil {
-			return err
-		}
-		defer surface.Free()
-
-		msgtext, err := s.renderer.CreateTextureFromSurface(surface)
-		if err != nil {
-			return err
-		}
-		s.bottomBarTexture = msgtext
+		s.renderer.Copy(
+			s.midRightBarTexture,
+			&sdl.Rect{X: 0, Y: 0, W: w, H: h},
+			&sdl.Rect{X: s.widthOutputScreen - (w + 50), Y: s.heightOutputScreen + (20 - (h / 2)), W: w, H: h},
+		)
 	}
 
 	_, _, w, h, err := s.bottomBarTexture.Query()
@@ -456,7 +501,7 @@ func (s *Screen) drawUI() error {
 	s.renderer.Copy(
 		s.bottomBarTexture,
 		&sdl.Rect{X: 0, Y: 0, W: w, H: h},
-		&sdl.Rect{X: (s.widthOutputScreen / 2) - (w / 2), Y: s.heightOutputScreen + (25 - (h / 2)), W: w, H: h},
+		&sdl.Rect{X: (s.widthOutputScreen / 2) - (w / 2), Y: s.heightOutputScreen + (20 - (h / 2)) + 40, W: w, H: h},
 	)
 
 	s.renderer.SetDrawColor(r, g, b, a)

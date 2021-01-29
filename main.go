@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io/ioutil"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/hculpan/go6502/emulator"
 	"github.com/hculpan/go6502/keyboard"
 	"github.com/hculpan/go6502/screen"
+	"github.com/sqweek/dialog"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -20,29 +26,108 @@ const (
 	up   = sdl.KEYUP
 )
 
-func loadRAM(em *emulator.Emulator) {
+func loadBIN(f string, em *emulator.Emulator) error {
 	// Read rom file
-	rom, err := ioutil.ReadFile("rom.bin")
+	rom, err := ioutil.ReadFile(f)
 	if err != nil {
 		fmt.Println(err)
-		return
+		return err
 	}
 	if len(rom) > 65024 {
-		fmt.Println("Rom file too large, must be 65024 with origin at 0x0200")
-		return
+		return fmt.Errorf("Rom file too large, must be 65024 with origin at 0x0200")
 	} else if len(rom) < 65024 {
-		fmt.Println("Rom file too small, must be 65024 with origin at 0x0200")
-		return
+		return fmt.Errorf("Rom file too small, must be 65024 with origin at 0x0200")
 	}
 
-	// Write to memory except
+	// Write to memory
 	for i := 0; i < 65024; i++ {
 		idx := i + 512
-		if idx < 0x8000 || idx > 0x83FF {
-			em.WriteMemory(uint16(idx), rom[i])
+		writeToEmulatorMemory(em, uint16(idx), rom[i])
+	}
+
+	return nil
+}
+
+func loadSBIN(f string, em *emulator.Emulator) error {
+	// Read rom file
+	rom, err := ioutil.ReadFile(f)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	org := int((uint16(rom[1]) << 8) + uint16(rom[0]))
+	fmt.Printf("org=%04X", org)
+
+	// Write to memory
+	for i := 4; i < len(rom); i++ {
+		addr := i + org - 4
+		writeToEmulatorMemory(em, uint16(addr), rom[i])
+	}
+
+	return nil
+}
+
+func loadTXT(f string, em *emulator.Emulator) error {
+	file, err := os.Open(f)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.Trim(scanner.Text(), " \n\r\t")
+		if len(line) > 0 {
+			addrStr := line[:4]
+			addr, err := strconv.ParseInt(addrStr, 16, 32)
+			if err != nil {
+				return fmt.Errorf("Parsing address '%s': %s", addrStr, err)
+			}
+			data := strings.Split(line[5:], " ")
+			for i, v := range data {
+				d, err := strconv.ParseInt(v, 16, 16)
+				if err != nil {
+					return fmt.Errorf("Parsing data '%s': %s", v, err)
+				}
+				writeToEmulatorMemory(em, uint16(int(addr)+i), byte(d))
+			}
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadRAM(f string, em *emulator.Emulator, scr *screen.Screen) error {
+	scr.SetRomName("")
+	switch filepath.Ext(f) {
+	case ".bin":
+		if err := loadBIN(f, em); err != nil {
+			return err
+		}
+	case ".sbin":
+		if err := loadSBIN(f, em); err != nil {
+			return err
+		}
+	case ".txt":
+		if err := loadTXT(f, em); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("Unrecognized file type: %s", filepath.Ext(f))
+	}
+
+	scr.SetRomName(f)
+	return nil
+}
+
+func writeToEmulatorMemory(em *emulator.Emulator, address uint16, data byte) {
+	if address < 0x8000 || address > 0x83FF {
+		em.WriteMemory(address, data)
+	}
 }
 
 func main() {
@@ -56,7 +141,10 @@ func main() {
 
 	em := emulator.NewEmulator(scr)
 
-	loadRAM(em)
+	if err := loadRAM("rom.bin", em, scr); err != nil {
+		fmt.Println("Failed to load rom:", err)
+		return
+	}
 
 	defer func() {
 		em.Terminate()
@@ -97,22 +185,30 @@ func main() {
 					case sdl.K_F7:
 						em.DisableSingleStep()
 					case sdl.K_F9:
+						filename, err := dialog.File().Filter("BIN files", "bin").Filter("SBIN files", "sbin").Filter("TXT files", "txt").Title("Load ROM").Load()
+						if err != nil {
+							dialog.Message(fmt.Sprintf("Unable to find %s: %s", filename, err)).Error()
+							return
+						}
 						em.Terminate()
 						em.CPU.Reset()
-						loadRAM(em)
+						err = loadRAM(filename, em, scr)
+						if err != nil {
+							dialog.Message(fmt.Sprintf("Unable to load %s: %s", filename, err)).Error()
+						}
 						scr.Reset()
 					case sdl.K_ESCAPE:
 						return
 					default:
 						r := k.ProcessKeyInput(keyboard.NewKeyInputFromEvent(event.(*sdl.KeyboardEvent)))
 						if r != 0 {
-							scr.ProcessRune(r)
+							em.SetKeyWaiting(r)
 						}
 					}
 				} else {
 					r := k.ProcessKeyInput(keyboard.NewKeyInputFromEvent(event.(*sdl.KeyboardEvent)))
 					if r != 0 {
-						scr.ProcessRune(r)
+						em.SetKeyWaiting(r)
 					}
 				}
 			}

@@ -4,14 +4,6 @@ import (
 	"github.com/hculpan/go6502/screen"
 )
 
-/*
-type Memory interface {
-	Size() uint16
-	ReadByte(address uint16) byte
-	WriteByte(address uint16, data byte)
-}
-*/
-
 const size = 1
 
 // ScreenInterface is the Memory (see i6502) component to write
