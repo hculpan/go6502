@@ -1,7 +1,7 @@
 package emulator
 
 import (
-	"time"
+	"fmt"
 
 	"github.com/ariejan/i6502"
 	"github.com/hculpan/go6502/screen"
@@ -86,8 +86,7 @@ func (e *Emulator) NextStep() {
 }
 
 // StartEmulator starts the emulator in a separate goroutine
-// t indicates the pause in microseconds
-func (e *Emulator) StartEmulator(t int64) {
+func (e *Emulator) StartEmulator() {
 	if e.Active {
 		return
 	}
@@ -95,7 +94,7 @@ func (e *Emulator) StartEmulator(t int64) {
 
 	e.CPU.Reset()
 
-	ticker := time.NewTicker(time.Duration(t) * time.Microsecond)
+	//	ticker := time.NewTicker(time.Duration(t) * time.Microsecond)
 	e.done = make(chan bool)
 
 	go func() {
@@ -104,9 +103,11 @@ func (e *Emulator) StartEmulator(t int64) {
 		}()
 		for {
 			select {
-			case <-e.done:
-				break
-			case <-ticker.C:
+			case x, _ := <-e.done:
+				fmt.Sprintf("done=%v", x)
+				return
+				//			case <-ticker.C:
+			default:
 				if !e.stepWait {
 					e.CPU.Step()
 					if e.SingleStep {

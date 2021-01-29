@@ -85,8 +85,9 @@ func main() {
 				if event.(*sdl.KeyboardEvent).Type == sdl.KEYDOWN {
 					switch keycode {
 					case sdl.K_F2:
-						em.StartEmulator(10) // 1 millisecond/step
+						em.StartEmulator()
 					case sdl.K_F3:
+						em.Terminate()
 						em.CPU.Reset()
 						scr.Reset()
 					case sdl.K_F5:

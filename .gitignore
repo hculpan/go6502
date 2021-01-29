@@ -8,6 +8,9 @@
 # For assembly programs
 *.bin  
 *.lst
+*.sbin
+debug.txt
+debugcode.txt
 
 # Test binary, built with `go test -c`
 *.test
