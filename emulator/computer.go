@@ -107,6 +107,7 @@ func (e *Emulator) StartEmulator() {
 		return
 	}
 	e.Active = true
+	e.done = false
 
 	e.CPU.Reset()
 

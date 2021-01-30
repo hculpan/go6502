@@ -26,6 +26,8 @@ type escapeCode struct {
 
 // Screen represents the main object to display text output
 type Screen struct {
+	computerStatus *ComputerStatus
+
 	cursor *CursorPos
 
 	textCols    int
@@ -59,15 +61,16 @@ type Screen struct {
 	heightOutputScreen int32
 	widthOutputScreen  int32
 
-	romName            string
 	bottomBarTexture   *sdl.Texture
 	midRightBarTexture *sdl.Texture
+	emulatorOnTexture  *sdl.Texture
+	emulatorOffTexture *sdl.Texture
 
 	videoRAM []rune
 }
 
 // NewScreen creates a new screen object
-func NewScreen(cols int, rows int) *Screen {
+func NewScreen(cols int, rows int, status *ComputerStatus) *Screen {
 	s := &Screen{textCols: cols, textRows: rows}
 	s.cursor = NewCursorPos(cols, rows, []rune{95, 0})
 	s.cursorNextSequence = true
@@ -83,12 +86,13 @@ func NewScreen(cols int, rows int) *Screen {
 	s.capsLock = false
 	s.Busy = false
 	s.shiftOn = false
+	s.computerStatus = status
 	return s
 }
 
 // SetRomName sets the name of the rom being loaded
 func (s *Screen) SetRomName(str string) {
-	s.romName = str
+	s.computerStatus.RomFilename = str
 	if s.midRightBarTexture != nil {
 		s.midRightBarTexture.Destroy()
 		s.midRightBarTexture = nil
@@ -108,6 +112,12 @@ func (s *Screen) CleanUp() {
 	}
 	if s.midRightBarTexture != nil {
 		s.midRightBarTexture.Destroy()
+	}
+	if s.emulatorOffTexture != nil {
+		s.emulatorOffTexture.Destroy()
+	}
+	if s.emulatorOnTexture != nil {
+		s.emulatorOnTexture.Destroy()
 	}
 	s.font.Close()
 	s.renderer.Destroy()
@@ -458,6 +468,54 @@ func (s *Screen) createBarTexture(msg string) (*sdl.Texture, error) {
 	return msgtext, nil
 }
 
+func (s *Screen) createPowerTextures() error {
+	data, err := resources.Asset("resources/computer_off.bmp")
+	if err != nil {
+		return err
+	}
+
+	rwops, err := sdl.RWFromMem(data)
+	if err != nil {
+		return err
+	}
+
+	surface, err := sdl.LoadBMPRW(rwops, true)
+	if err != nil {
+		return err
+	}
+
+	texture, err := s.renderer.CreateTextureFromSurface(surface)
+	if err != nil {
+		return err
+	}
+	s.emulatorOffTexture = texture
+	surface.Free()
+
+	data, err = resources.Asset("resources/computer_on.bmp")
+	if err != nil {
+		return err
+	}
+
+	rwops, err = sdl.RWFromMem(data)
+	if err != nil {
+		return err
+	}
+
+	surface, err = sdl.LoadBMPRW(rwops, true)
+	if err != nil {
+		return err
+	}
+
+	texture, err = s.renderer.CreateTextureFromSurface(surface)
+	if err != nil {
+		return err
+	}
+	s.emulatorOnTexture = texture
+	surface.Free()
+
+	return nil
+}
+
 func (s *Screen) drawUI() error {
 	r, g, b, a, _ := s.renderer.GetDrawColor()
 
@@ -465,19 +523,49 @@ func (s *Screen) drawUI() error {
 	s.renderer.DrawLine(0, s.heightOutputScreen+1, s.widthOutputScreen, s.heightOutputScreen+1)
 
 	if s.bottomBarTexture == nil {
-		texture, err := s.createBarTexture("F2: Start       F3: Reset       F5: Stop       F6: Single step       F7: Resume       F9: Reset/Reload       ESC: Exit")
+		texture, err := s.createBarTexture("F2: On       F3: Off       F5: Pause       F6: Single step       F7: Resume       F9: Reload/Reset       ESC: Exit")
 		if err != nil {
 			return err
 		}
 		s.bottomBarTexture = texture
 	}
 
-	if s.midRightBarTexture == nil && len(s.romName) > 0 {
-		texture, err := s.createBarTexture(fmt.Sprintf("ROM: %s", filepath.Base(s.romName)))
+	if s.midRightBarTexture == nil && len(s.computerStatus.RomFilename) > 0 {
+		texture, err := s.createBarTexture(fmt.Sprintf("ROM: %s", filepath.Base(s.computerStatus.RomFilename)))
 		if err != nil {
 			return err
 		}
 		s.midRightBarTexture = texture
+	}
+
+	if s.emulatorOffTexture == nil {
+		if err := s.createPowerTextures(); err != nil {
+			return err
+		}
+	}
+
+	if s.computerStatus.Running {
+		_, _, w, h, err := s.emulatorOffTexture.Query()
+		if err != nil {
+			return err
+		}
+
+		s.renderer.Copy(
+			s.emulatorOnTexture,
+			&sdl.Rect{X: 0, Y: 0, W: w, H: h},
+			&sdl.Rect{X: 10, Y: s.heightOutputScreen + (45 - (h / 10)), W: w / 5, H: h / 5},
+		)
+	} else {
+		_, _, w, h, err := s.emulatorOffTexture.Query()
+		if err != nil {
+			return err
+		}
+
+		s.renderer.Copy(
+			s.emulatorOffTexture,
+			&sdl.Rect{X: 0, Y: 0, W: w, H: h},
+			&sdl.Rect{X: 10, Y: s.heightOutputScreen + (45 - (h / 10)), W: w / 5, H: h / 5},
+		)
 	}
 
 	if s.midRightBarTexture != nil {

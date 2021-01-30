@@ -11,6 +11,7 @@ import (
 
 	"github.com/hculpan/go6502/emulator"
 	"github.com/hculpan/go6502/keyboard"
+	"github.com/hculpan/go6502/resources"
 	"github.com/hculpan/go6502/screen"
 	"github.com/sqweek/dialog"
 	"github.com/veandco/go-sdl2/sdl"
@@ -26,112 +27,9 @@ const (
 	up   = sdl.KEYUP
 )
 
-func loadBIN(f string, em *emulator.Emulator) error {
-	// Read rom file
-	rom, err := ioutil.ReadFile(f)
-	if err != nil {
-		fmt.Println(err)
-		return err
-	}
-	if len(rom) > 65024 {
-		return fmt.Errorf("Rom file too large, must be 65024 with origin at 0x0200")
-	} else if len(rom) < 65024 {
-		return fmt.Errorf("Rom file too small, must be 65024 with origin at 0x0200")
-	}
-
-	// Write to memory
-	for i := 0; i < 65024; i++ {
-		idx := i + 512
-		writeToEmulatorMemory(em, uint16(idx), rom[i])
-	}
-
-	return nil
-}
-
-func loadSBIN(f string, em *emulator.Emulator) error {
-	// Read rom file
-	rom, err := ioutil.ReadFile(f)
-	if err != nil {
-		fmt.Println(err)
-		return err
-	}
-
-	org := int((uint16(rom[1]) << 8) + uint16(rom[0]))
-	fmt.Printf("org=%04X", org)
-
-	// Write to memory
-	for i := 4; i < len(rom); i++ {
-		addr := i + org - 4
-		writeToEmulatorMemory(em, uint16(addr), rom[i])
-	}
-
-	return nil
-}
-
-func loadTXT(f string, em *emulator.Emulator) error {
-	file, err := os.Open(f)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.Trim(scanner.Text(), " \n\r\t")
-		if len(line) > 0 {
-			addrStr := line[:4]
-			addr, err := strconv.ParseInt(addrStr, 16, 32)
-			if err != nil {
-				return fmt.Errorf("Parsing address '%s': %s", addrStr, err)
-			}
-			data := strings.Split(line[5:], " ")
-			for i, v := range data {
-				d, err := strconv.ParseInt(v, 16, 16)
-				if err != nil {
-					return fmt.Errorf("Parsing data '%s': %s", v, err)
-				}
-				writeToEmulatorMemory(em, uint16(int(addr)+i), byte(d))
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func loadRAM(f string, em *emulator.Emulator, scr *screen.Screen) error {
-	scr.SetRomName("")
-	switch filepath.Ext(f) {
-	case ".bin":
-		if err := loadBIN(f, em); err != nil {
-			return err
-		}
-	case ".sbin":
-		if err := loadSBIN(f, em); err != nil {
-			return err
-		}
-	case ".txt":
-		if err := loadTXT(f, em); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("Unrecognized file type: %s", filepath.Ext(f))
-	}
-
-	scr.SetRomName(f)
-	return nil
-}
-
-func writeToEmulatorMemory(em *emulator.Emulator, address uint16, data byte) {
-	if address < 0x8000 || address > 0x83FF {
-		em.WriteMemory(address, data)
-	}
-}
-
 func main() {
-	scr := screen.NewScreen(textCols, textRows)
+	status := screen.NewComputerStatus()
+	scr := screen.NewScreen(textCols, textRows, status)
 	if err := scr.Show(); err != nil {
 		fmt.Println(err)
 		return
@@ -141,7 +39,7 @@ func main() {
 
 	em := emulator.NewEmulator(scr)
 
-	if err := loadRAM("rom.bin", em, scr); err != nil {
+	if err := loadROMBin(em, scr); err != nil {
 		fmt.Println("Failed to load rom:", err)
 		return
 	}
@@ -150,7 +48,7 @@ func main() {
 		em.Terminate()
 	}()
 
-	//	var lastAddress uint16 = 0
+	// var lastAddress uint16 = 0
 	for {
 		/*		if em.Active {
 				address := em.CPU.PC
@@ -174,19 +72,26 @@ func main() {
 					switch keycode {
 					case sdl.K_F2:
 						em.StartEmulator()
+						status.Running = true
 					case sdl.K_F3:
 						em.Terminate()
 						em.CPU.Reset()
 						scr.Reset()
+						status.Running = false
 					case sdl.K_F5:
 						em.EnableSingleStep()
+						status.SingleStep = true
 					case sdl.K_F6:
 						em.NextStep()
 					case sdl.K_F7:
 						em.DisableSingleStep()
+						status.SingleStep = false
 					case sdl.K_F9:
-						filename, err := dialog.File().Filter("BIN files", "bin").Filter("SBIN files", "sbin").Filter("TXT files", "txt").Title("Load ROM").Load()
+						filename, err := dialog.File().Filter("TXT files", "txt").Filter("SBIN files", "sbin").Filter("BIN files", "bin").Title("Load ROM File").Load()
 						if err != nil {
+							if strings.Contains(err.Error(), "Cancelled") {
+								break
+							}
 							dialog.Message(fmt.Sprintf("Unable to find %s: %s", filename, err)).Error()
 							return
 						}
@@ -197,8 +102,12 @@ func main() {
 							dialog.Message(fmt.Sprintf("Unable to load %s: %s", filename, err)).Error()
 						}
 						scr.Reset()
+						status.Running = false
 					case sdl.K_ESCAPE:
-						return
+						ok := dialog.Message("Do you wish to exit?").Title("Exit go6502").YesNo()
+						if ok {
+							return
+						}
 					default:
 						r := k.ProcessKeyInput(keyboard.NewKeyInputFromEvent(event.(*sdl.KeyboardEvent)))
 						if r != 0 {
@@ -241,5 +150,141 @@ func sendEscSequence(s string, scr *screen.Screen) {
 	scr.ProcessRune(keyboard.Escape)
 	for _, v := range s {
 		scr.ProcessRune(v)
+	}
+}
+
+func loadROMBin(em *emulator.Emulator, scr *screen.Screen) error {
+	// Read rom file
+	rom, err := resources.Asset("resources/rom.bin")
+	if err != nil {
+		return err
+	}
+	if len(rom) > 65024 {
+		return fmt.Errorf("Rom file too large, must be 65024 with origin at 0x0200")
+	} else if len(rom) < 65024 {
+		return fmt.Errorf("Rom file too small, must be 65024 with origin at 0x0200")
+	}
+
+	resetRAM(em)
+	// Write to memory
+	for i := 0; i < 65024; i++ {
+		idx := i + 512
+		writeToEmulatorMemory(em, uint16(idx), rom[i])
+	}
+
+	scr.SetRomName("rom.bin")
+	return nil
+}
+
+func loadBIN(f string, em *emulator.Emulator) error {
+	// Read rom file
+	rom, err := ioutil.ReadFile(f)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+	if len(rom) > 65024 {
+		return fmt.Errorf("Rom file too large, must be 65024 with origin at 0x0200")
+	} else if len(rom) < 65024 {
+		return fmt.Errorf("Rom file too small, must be 65024 with origin at 0x0200")
+	}
+
+	resetRAM(em)
+	// Write to memory
+	for i := 0; i < 65024; i++ {
+		idx := i + 512
+		writeToEmulatorMemory(em, uint16(idx), rom[i])
+	}
+
+	return nil
+}
+
+func loadSBIN(f string, em *emulator.Emulator) error {
+	// Read rom file
+	rom, err := ioutil.ReadFile(f)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	org := int((uint16(rom[1]) << 8) + uint16(rom[0]))
+	fmt.Printf("org=%04X", org)
+
+	resetRAM(em)
+	// Write to memory
+	for i := 4; i < len(rom); i++ {
+		addr := i + org - 4
+		writeToEmulatorMemory(em, uint16(addr), rom[i])
+	}
+
+	return nil
+}
+
+func loadTXT(f string, em *emulator.Emulator) error {
+	file, err := os.Open(f)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	resetRAM(em)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.Trim(scanner.Text(), " \n\r\t")
+		if len(line) > 0 {
+			addrStr := line[:4]
+			addr, err := strconv.ParseInt(addrStr, 16, 32)
+			if err != nil {
+				return fmt.Errorf("Parsing address '%s': %s", addrStr, err)
+			}
+			data := strings.Split(line[5:], " ")
+			for i, v := range data {
+				d, err := strconv.ParseInt(v, 16, 16)
+				if err != nil {
+					return fmt.Errorf("Parsing data '%s': %s", v, err)
+				}
+				writeToEmulatorMemory(em, uint16(int(addr)+i), byte(d))
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func resetRAM(em *emulator.Emulator) {
+	for x := 0; x < 65536; x++ {
+		writeToEmulatorMemory(em, uint16(x), 0)
+	}
+}
+
+func loadRAM(f string, em *emulator.Emulator, scr *screen.Screen) error {
+	scr.SetRomName("")
+	switch filepath.Ext(f) {
+	case ".bin":
+		if err := loadBIN(f, em); err != nil {
+			return err
+		}
+	case ".sbin":
+		if err := loadSBIN(f, em); err != nil {
+			return err
+		}
+	case ".txt":
+		if err := loadTXT(f, em); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("Unrecognized file type: %s", filepath.Ext(f))
+	}
+
+	scr.SetRomName(f)
+	return nil
+}
+
+func writeToEmulatorMemory(em *emulator.Emulator, address uint16, data byte) {
+	if address < 0x8000 || address > 0x83FF {
+		em.WriteMemory(address, data)
 	}
 }

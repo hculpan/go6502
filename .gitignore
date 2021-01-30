@@ -5,8 +5,12 @@
 *.so
 *.dylib
 
+.vscode
+__debug_bin
+
 # For assembly programs
 *.bin  
+!resources/rom.bin
 *.lst
 *.sbin
 debug.txt
