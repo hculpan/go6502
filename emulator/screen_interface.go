@@ -25,7 +25,7 @@ func (s *ScreenInterface) Size() uint16 {
 
 // ReadByte reads the memory from the screen interface
 func (s *ScreenInterface) ReadByte(address uint16) byte {
-	if s.Scr.Busy {
+	if s.Scr.IsBusy() {
 		return 1
 	} else {
 		return 0

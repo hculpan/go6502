@@ -1,8 +1,6 @@
 package emulator
 
 import (
-	"time"
-
 	"github.com/ariejan/i6502"
 	"github.com/hculpan/go6502/screen"
 )
@@ -54,15 +52,20 @@ func NewEmulator(scr *screen.Screen) *Emulator {
 	return result
 }
 
+// GetCPU returns a reference to the CPU
+func (e Emulator) GetCPU() *i6502.Cpu {
+	return e.CPU
+}
+
+// ReadMemory allows the caller to read data from memory
+func (e Emulator) ReadMemory(address uint16) uint8 {
+	return e.CPU.Bus.ReadByte(address)
+}
+
 // WriteMemory allows the caller to write data to a specific
 // location in memory
 func (e *Emulator) WriteMemory(address uint16, data uint8) {
 	e.CPU.Bus.WriteByte(address, data)
-}
-
-// ReadMemory allows the caller to read data from memory
-func (e *Emulator) ReadMemory(address uint16) uint8 {
-	return e.CPU.Bus.ReadByte(address)
 }
 
 // SetKeyWaiting sets the next key that is waiting to be
@@ -77,9 +80,7 @@ func (e *Emulator) SetKeyWaiting(k rune) {
 
 // Terminate terminates the emulator
 func (e *Emulator) Terminate() {
-	if e.Active {
-		e.done = true
-	}
+	e.done = true
 }
 
 // EnableSingleStep turns on single stepping through instructions
@@ -101,6 +102,17 @@ func (e *Emulator) NextStep() {
 	e.stepWait = false
 }
 
+// Step allows the CPU to process the next
+// clock tick
+func (e *Emulator) Step() {
+	if !e.stepWait {
+		e.CPU.Step()
+		if e.SingleStep {
+			e.stepWait = true
+		}
+	}
+}
+
 // StartEmulator starts the emulator in a separate goroutine
 func (e *Emulator) StartEmulator() {
 	if e.Active {
@@ -111,23 +123,23 @@ func (e *Emulator) StartEmulator() {
 
 	e.CPU.Reset()
 
-	go func() {
-		defer func() {
-			e.Active = false
-		}()
-		for {
-			if e.done {
-				return
-			}
-
-			if !e.stepWait {
-				e.CPU.Step()
-				if e.SingleStep {
-					e.stepWait = true
+	/*	go func() {
+			defer func() {
+				e.Active = false
+			}()
+			for {
+				if e.done {
+					return
 				}
-				time.Sleep(1 * time.Microsecond)
-			}
-		}
-	}()
 
+				if !e.stepWait {
+					e.CPU.Step()
+					if e.SingleStep {
+						e.stepWait = true
+					}
+					time.Sleep(1 * time.Microsecond)
+				}
+			}
+		}()
+	*/
 }

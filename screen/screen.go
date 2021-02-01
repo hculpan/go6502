@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/hculpan/go6502/keyboard"
 	"github.com/hculpan/go6502/resources"
@@ -26,22 +25,25 @@ type escapeCode struct {
 
 // Screen represents the main object to display text output
 type Screen struct {
-	computerStatus *ComputerStatus
+	computerStatus     *ComputerStatus
+	prevComputerStatus *ComputerStatus
 
 	cursor *CursorPos
 
-	textCols    int
-	textRows    int
+	textCols   int
+	textRows   int
+	background sdl.Color
+	foreground sdl.Color
+
+	window       *sdl.Window
+	renderer     *sdl.Renderer
+	screenWidth  int32
+	screenHeight int32
+
+	font        *ttf.Font
 	fontmetrics *ttf.GlyphMetrics
-	background  sdl.Color
-	foreground  sdl.Color
-
-	window   *sdl.Window
-	renderer *sdl.Renderer
-	font     *ttf.Font
-
-	charHeight int32
-	charWidth  int32
+	charHeight  int32
+	charWidth   int32
 
 	Busy bool
 
@@ -49,7 +51,9 @@ type Screen struct {
 	escapeSequence string
 	escapeCodes    []escapeCode
 
-	done                chan bool
+	debugScreen *DebugScreen
+
+	//	done                chan bool
 	cursorNextSequence  bool
 	cursorCurrentSymbol rune
 
@@ -58,15 +62,17 @@ type Screen struct {
 	capsLock bool
 	shiftOn  bool
 
-	heightOutputScreen int32
-	widthOutputScreen  int32
-
-	bottomBarTexture   *sdl.Texture
-	midRightBarTexture *sdl.Texture
+	escapeTexture      *sdl.Texture
+	romFileTexture     *sdl.Texture
+	keyOptionsTexture  *sdl.Texture
 	emulatorOnTexture  *sdl.Texture
 	emulatorOffTexture *sdl.Texture
 
+	emulatorOnOffRect *sdl.Rect
+
 	videoRAM []rune
+
+	screenDirty bool
 }
 
 // NewScreen creates a new screen object
@@ -87,31 +93,116 @@ func NewScreen(cols int, rows int, status *ComputerStatus) *Screen {
 	s.Busy = false
 	s.shiftOn = false
 	s.computerStatus = status
+	s.prevComputerStatus = nil
+	s.debugScreen = NewDebugScreen(s)
+	s.screenDirty = true
 	return s
 }
 
-// SetRomName sets the name of the rom being loaded
-func (s *Screen) SetRomName(str string) {
-	s.computerStatus.RomFilename = str
-	if s.midRightBarTexture != nil {
-		s.midRightBarTexture.Destroy()
-		s.midRightBarTexture = nil
+// GetPosition returns the position of the screen
+// returns -1, -1 if window not created
+func (s Screen) GetPosition() (x, y int32) {
+	if s.window != nil {
+		return s.window.GetPosition()
 	}
+
+	return -1, -1
+}
+
+// GetSize returns the size of the screen
+// returns -1,-1 if window not create
+func (s Screen) GetSize() (w, h int32) {
+	if s.window != nil {
+		return s.window.GetSize()
+	}
+
+	return -1, -1
+}
+
+// IsBusy returns if the screen is busy
+func (s Screen) IsBusy() bool {
+	return s.Busy
+}
+
+// UpdateScreen allows an external process
+// to force an update of the screen
+func (s *Screen) UpdateScreen() {
+	s.screenDirty = true
+}
+
+// ProcessRune processes an ASCII character
+func (s *Screen) ProcessRune(r rune) {
+	s.screenDirty = true
+	s.Busy = true
+	if s.escapeMode {
+		s.matchesEscapeCode(r)
+	} else {
+		switch {
+		case r == keyboard.Backspace: // backspace
+			s.cursor.Backspace()
+			s.videoRAM[s.calculateIndexFromScreenLocation(s.cursor.X, s.cursor.Y)] = 0
+		case r == keyboard.Escape:
+			s.escapeMode = true
+			s.escapeSequence = ""
+		case r == keyboard.Enter: // enter
+			s.cursor.NewLine()
+		case r < 32 || r > 126:
+			// Nothing
+		default:
+			s.displayRune(r)
+		}
+	}
+	s.Busy = false
+}
+
+// EnableDebug turns on debugging/single step
+func (s *Screen) EnableDebug(em EmulatorInterface) {
+	s.computerStatus.SingleStep = true
+	s.debugScreen.Show(em)
+}
+
+// DisableDebug turns off debugging/single step
+func (s *Screen) DisableDebug() {
+	s.computerStatus.SingleStep = true
+	s.debugScreen.Hide()
+}
+
+func (s *Screen) computerStatusChanged() bool {
+	if s.prevComputerStatus == nil {
+		s.prevComputerStatus = s.computerStatus.Copy()
+		return false
+	}
+
+	result := s.computerStatus.Running != s.prevComputerStatus.Running ||
+		s.computerStatus.SingleStep != s.prevComputerStatus.SingleStep ||
+		s.computerStatus.RomFilename != s.computerStatus.RomFilename
+
+	if result {
+		s.prevComputerStatus = s.computerStatus.Copy()
+	}
+
+	return result
 }
 
 // CleanUp cleans up all the resources creates by the screen object
 func (s *Screen) CleanUp() {
-	s.done <- true
+	if s.debugScreen != nil {
+		s.debugScreen.CleanUp()
+	}
+
 	for x := 0; x < 128; x++ {
 		if s.symbols[x] != nil {
 			s.symbols[x].Destroy()
 		}
 	}
-	if s.bottomBarTexture != nil {
-		s.bottomBarTexture.Destroy()
+	if s.escapeTexture != nil {
+		s.escapeTexture.Destroy()
 	}
-	if s.midRightBarTexture != nil {
-		s.midRightBarTexture.Destroy()
+	if s.romFileTexture != nil {
+		s.romFileTexture.Destroy()
+	}
+	if s.keyOptionsTexture != nil {
+		s.keyOptionsTexture.Destroy()
 	}
 	if s.emulatorOffTexture != nil {
 		s.emulatorOffTexture.Destroy()
@@ -119,9 +210,15 @@ func (s *Screen) CleanUp() {
 	if s.emulatorOnTexture != nil {
 		s.emulatorOnTexture.Destroy()
 	}
+
 	s.font.Close()
 	s.renderer.Destroy()
 	s.window.Destroy()
+}
+
+// GetWindowPosition returns the current window position
+func (s *Screen) GetWindowPosition() (x, y int32) {
+	return s.window.GetPosition()
 }
 
 func (s *Screen) initSymbolTexture(r rune) (*sdl.Texture, error) {
@@ -172,6 +269,7 @@ func findTwoNumbers(s string, def int) (int, int) {
 
 // Reset resets the screen to startup state
 func (s *Screen) Reset() {
+	s.screenDirty = true
 	s.cursor.X = 0
 	s.cursor.Y = 0
 	s.cursor.ClearScroll()
@@ -299,26 +397,14 @@ func (s *Screen) initEscapeCodes() {
 }
 
 func (s *Screen) initializeFontStuff() error {
-	// Load data from bindata in resources/resources.go
-	data, err := resources.Asset("resources/OldComputerManualMonospaced-KmlZ.ttf")
-	if err != nil {
-		return err
-	}
-
-	rwops, err := sdl.RWFromMem(data)
-	if err != nil {
-		return err
-	}
-
-	font, err := ttf.OpenFontRW(rwops, 1, 24)
+	font, fontmetrics, err := loadFont("OldComputerManualMonospaced-KmlZ.ttf")
 	if err != nil {
 		return err
 	}
 	s.font = font
+	s.fontmetrics = fontmetrics
 
-	s.fontmetrics, _ = font.GlyphMetrics('A')
-	s.charWidth = int32(s.fontmetrics.MaxX)
-	s.charHeight = int32(s.fontmetrics.MaxY + s.fontmetrics.Advance)
+	s.charWidth, s.charHeight = getCharacterMetrics(s.fontmetrics)
 
 	return nil
 }
@@ -326,61 +412,42 @@ func (s *Screen) initializeFontStuff() error {
 // Show initializes the main screen and shows it
 func (s *Screen) Show() error {
 	if err := sdl.Init(sdl.INIT_EVERYTHING); err != nil {
-		return err
+		panic(err)
 	}
 
 	if err := ttf.Init(); err != nil {
-		return err
+		panic(err)
 	}
 
 	if err := s.initializeFontStuff(); err != nil {
-		return err
+		panic(err)
 	}
 
-	s.heightOutputScreen = int32((s.fontmetrics.MaxY + s.fontmetrics.Advance) * s.textRows)
-	s.widthOutputScreen = int32((s.fontmetrics.MaxX) * s.textCols)
+	s.screenHeight = int32((s.fontmetrics.MaxY + s.fontmetrics.Advance) * s.textRows)
+	s.screenWidth = int32((s.fontmetrics.MaxX) * s.textCols)
 
 	window, err := sdl.CreateWindow(
 		"Kabputer",
 		sdl.WINDOWPOS_CENTERED,
 		sdl.WINDOWPOS_CENTERED,
-		s.widthOutputScreen,
-		s.heightOutputScreen+90,
-		sdl.WINDOW_OPENGL,
+		s.screenWidth,
+		s.screenHeight+90,
+		sdl.WINDOW_ALLOW_HIGHDPI,
 	)
 	if err != nil {
-		return err
+		panic(err)
 	}
 	s.window = window
 
 	renderer, err := sdl.CreateRenderer(s.window, -1, sdl.RENDERER_ACCELERATED)
 	if err != nil {
-		return err
+		panic(err)
 	}
 	s.renderer = renderer
 
 	s.initializeSymbols()
 
 	s.initEscapeCodes()
-
-	ticker := time.NewTicker(50 * time.Millisecond)
-	s.done = make(chan bool)
-
-	go func() {
-		cnt := 0
-		for {
-			select {
-			case <-s.done:
-				return
-			case <-ticker.C:
-				if cnt%6 == 0 {
-					s.cursorNextSequence = true
-				}
-				s.DrawScreen()
-				cnt++
-			}
-		}
-	}()
 
 	return nil
 }
@@ -413,59 +480,52 @@ func (s *Screen) calculateIndexFromScreenLocation(x, y int) int {
 
 // DrawScreen draws the entire screen
 func (s *Screen) DrawScreen() {
-	s.renderer.SetDrawColor(s.background.R, s.background.G, s.background.B, s.background.A)
-	s.renderer.Clear()
+	if s.screenDirty {
 
-	if s.cursor.Scroll {
-		s.scrollDisplayUp()
-		s.cursor.ClearScroll()
-	}
+		s.renderer.SetDrawColor(s.background.R, s.background.G, s.background.B, s.background.A)
+		s.renderer.Clear()
 
-	for i, v := range s.videoRAM {
-		if v != 0 {
-			x, y := s.calculateScreenLocationFromIndex(i)
-			s.displayRuneAt(v, x, y)
+		if s.cursor.Scroll {
+			s.scrollDisplayUp()
+			s.cursor.ClearScroll()
 		}
+
+		for i, v := range s.videoRAM {
+			if v != 0 {
+				x, y := s.calculateScreenLocationFromIndex(i)
+				s.displayRuneAt(v, x, y)
+			}
+		}
+
+		s.displayCursor()
+
+		if err := s.drawUI(); err != nil {
+			panic(err)
+		}
+
+		s.renderer.Present()
+
 	}
 
-	s.displayCursor()
-
-	if err := s.drawUI(); err != nil {
-		panic(err)
+	if s.computerStatus.SingleStep {
+		s.debugScreen.DrawScreen()
 	}
 
-	s.renderer.Present()
+	s.screenDirty = false
 }
 
 func (s *Screen) createBarTexture(msg string) (*sdl.Texture, error) {
-	// Load data from bindata in resources/resources.go
-	data, err := resources.Asset("resources/Aileron-Bold.otf")
+	font, _, err := loadFont("Aileron-Bold.otf")
 	if err != nil {
 		return nil, err
 	}
 
-	rwops, err := sdl.RWFromMem(data)
+	texture, err := createTexture(msg, s.foreground, font, s.renderer)
 	if err != nil {
 		return nil, err
 	}
 
-	font, err := ttf.OpenFontRW(rwops, 1, 24)
-	if err != nil {
-		return nil, err
-	}
-
-	surface, err := font.RenderUTF8Solid(msg, s.foreground)
-	if err != nil {
-		return nil, err
-	}
-	defer surface.Free()
-
-	msgtext, err := s.renderer.CreateTextureFromSurface(surface)
-	if err != nil {
-		return nil, err
-	}
-
-	return msgtext, nil
+	return texture, nil
 }
 
 func (s *Screen) createPowerTextures() error {
@@ -513,35 +573,64 @@ func (s *Screen) createPowerTextures() error {
 	s.emulatorOnTexture = texture
 	surface.Free()
 
+	_, _, w, h, err := s.emulatorOffTexture.Query()
+	if err != nil {
+		return err
+	}
+	s.emulatorOnOffRect = &sdl.Rect{X: 10, Y: s.screenHeight + (45 - (h / 10)), W: w / 5, H: h / 5}
+
+	return nil
+}
+
+func (s *Screen) generateStatusTextures() error {
+	var msg string
+	switch {
+	case s.computerStatus.Running && !s.computerStatus.SingleStep:
+		msg = "F2: Off       F5: Pause       F9: Reload/Reset"
+	case s.computerStatus.Running && s.computerStatus.SingleStep:
+		msg = "F2: Off        F6: Single step       F7: Resume       F9: Reload/Reset"
+	default:
+		msg = "F2: On        F3: On/Single step        F9: Reload/Reset"
+	}
+
+	texture, err := s.createBarTexture(msg)
+	if err != nil {
+		return err
+	}
+	s.keyOptionsTexture = texture
+
+	texture, err = s.createBarTexture(fmt.Sprintf("ROM: %s", filepath.Base(s.computerStatus.RomFilename)))
+	if err != nil {
+		return err
+	}
+	s.romFileTexture = texture
+
 	return nil
 }
 
 func (s *Screen) drawUI() error {
+	changed := s.prevComputerStatus == nil || !s.computerStatus.Equals(*s.prevComputerStatus)
 	r, g, b, a, _ := s.renderer.GetDrawColor()
 
 	s.renderer.SetDrawColor(128, 128, 128, 128)
-	s.renderer.DrawLine(0, s.heightOutputScreen+1, s.widthOutputScreen, s.heightOutputScreen+1)
+	s.renderer.DrawLine(0, s.screenHeight+1, s.screenWidth, s.screenHeight+1)
 
-	if s.bottomBarTexture == nil {
-		texture, err := s.createBarTexture("F2: On       F3: Off       F5: Pause       F6: Single step       F7: Resume       F9: Reload/Reset       ESC: Exit")
-		if err != nil {
-			return err
-		}
-		s.bottomBarTexture = texture
-	}
-
-	if s.midRightBarTexture == nil && len(s.computerStatus.RomFilename) > 0 {
-		texture, err := s.createBarTexture(fmt.Sprintf("ROM: %s", filepath.Base(s.computerStatus.RomFilename)))
-		if err != nil {
-			return err
-		}
-		s.midRightBarTexture = texture
+	if changed {
+		s.generateStatusTextures()
 	}
 
 	if s.emulatorOffTexture == nil {
 		if err := s.createPowerTextures(); err != nil {
 			return err
 		}
+	}
+
+	if s.escapeTexture == nil {
+		texture, err := s.createBarTexture("ESC: Exit")
+		if err != nil {
+			return err
+		}
+		s.escapeTexture = texture
 	}
 
 	if s.computerStatus.Running {
@@ -553,7 +642,7 @@ func (s *Screen) drawUI() error {
 		s.renderer.Copy(
 			s.emulatorOnTexture,
 			&sdl.Rect{X: 0, Y: 0, W: w, H: h},
-			&sdl.Rect{X: 10, Y: s.heightOutputScreen + (45 - (h / 10)), W: w / 5, H: h / 5},
+			s.emulatorOnOffRect,
 		)
 	} else {
 		_, _, w, h, err := s.emulatorOffTexture.Query()
@@ -564,32 +653,45 @@ func (s *Screen) drawUI() error {
 		s.renderer.Copy(
 			s.emulatorOffTexture,
 			&sdl.Rect{X: 0, Y: 0, W: w, H: h},
-			&sdl.Rect{X: 10, Y: s.heightOutputScreen + (45 - (h / 10)), W: w / 5, H: h / 5},
+			s.emulatorOnOffRect,
 		)
 	}
 
-	if s.midRightBarTexture != nil {
-		_, _, w, h, err := s.midRightBarTexture.Query()
+	if s.romFileTexture != nil {
+		_, _, w, h, err := s.romFileTexture.Query()
 		if err != nil {
 			return err
 		}
 
 		s.renderer.Copy(
-			s.midRightBarTexture,
+			s.romFileTexture,
 			&sdl.Rect{X: 0, Y: 0, W: w, H: h},
-			&sdl.Rect{X: s.widthOutputScreen - (w + 50), Y: s.heightOutputScreen + (20 - (h / 2)), W: w, H: h},
+			&sdl.Rect{X: s.screenWidth - (w + 20), Y: s.screenHeight + (20 - (h / 2)), W: w, H: h},
 		)
 	}
 
-	_, _, w, h, err := s.bottomBarTexture.Query()
+	if s.escapeTexture != nil {
+		_, _, w, h, err := s.escapeTexture.Query()
+		if err != nil {
+			return err
+		}
+
+		s.renderer.Copy(
+			s.escapeTexture,
+			&sdl.Rect{X: 0, Y: 0, W: w, H: h},
+			&sdl.Rect{X: s.screenWidth - (w + 20), Y: s.screenHeight + (20 - (h / 2) + 40), W: w, H: h},
+		)
+	}
+
+	_, _, w, h, err := s.keyOptionsTexture.Query()
 	if err != nil {
 		return err
 	}
 
 	s.renderer.Copy(
-		s.bottomBarTexture,
+		s.keyOptionsTexture,
 		&sdl.Rect{X: 0, Y: 0, W: w, H: h},
-		&sdl.Rect{X: (s.widthOutputScreen / 2) - (w / 2), Y: s.heightOutputScreen + (20 - (h / 2)) + 40, W: w, H: h},
+		&sdl.Rect{X: (s.screenWidth / 2) - (w / 2) - 100, Y: s.screenHeight + (20 - (h / 2)), W: w, H: h},
 	)
 
 	s.renderer.SetDrawColor(r, g, b, a)
@@ -607,31 +709,8 @@ func (s *Screen) GetFontHeight() int32 {
 	return s.charHeight
 }
 
-// ProcessRune processes an ASCII character
-func (s *Screen) ProcessRune(r rune) {
-	s.Busy = true
-	if s.escapeMode {
-		s.matchesEscapeCode(r)
-	} else {
-		switch {
-		case r == keyboard.Backspace: // backspace
-			s.cursor.Backspace()
-			s.videoRAM[s.calculateIndexFromScreenLocation(s.cursor.X, s.cursor.Y)] = 0
-		case r == keyboard.Escape:
-			s.escapeMode = true
-			s.escapeSequence = ""
-		case r == keyboard.Enter: // enter
-			s.cursor.NewLine()
-		case r < 32 || r > 126:
-			// Nothing
-		default:
-			s.displayRune(r)
-		}
-	}
-	s.Busy = false
-}
-
 func (s *Screen) scrollDisplayUp() {
+	s.screenDirty = true
 	for i := range s.videoRAM[:len(s.videoRAM)-s.textCols] {
 		s.videoRAM[i] = s.videoRAM[i+s.textCols]
 	}
@@ -642,6 +721,7 @@ func (s *Screen) scrollDisplayUp() {
 }
 
 func (s *Screen) scrollDisplayDown() {
+	s.screenDirty = true
 	for i := len(s.videoRAM) - s.textCols - 1; i >= 0; i-- {
 		s.videoRAM[i+s.textCols] = s.videoRAM[i]
 	}
@@ -652,6 +732,10 @@ func (s *Screen) scrollDisplayDown() {
 }
 
 func (s *Screen) displayCursor() {
+	if !s.computerStatus.Running {
+		return
+	}
+
 	// Now render new text
 	if s.cursorNextSequence {
 		s.cursorCurrentSymbol = s.cursor.NextSequence()
@@ -677,4 +761,17 @@ func (s *Screen) displayRune(r rune) error {
 	s.videoRAM[i] = r
 	s.cursor.NextLocation()
 	return nil
+}
+
+// IsEmulatorOnOffClicked returns if x,y is within the rectangle
+// of the graphic on/off switch
+func (s *Screen) IsEmulatorOnOffClicked(x int32, y int32) bool {
+	if s.emulatorOnOffRect == nil {
+		return false
+	}
+
+	return x > s.emulatorOnOffRect.X &&
+		x < s.emulatorOnOffRect.X+s.emulatorOnOffRect.W &&
+		y > s.emulatorOnOffRect.Y &&
+		y < s.emulatorOnOffRect.Y+s.emulatorOnOffRect.H
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hculpan/go6502/emulator"
 	"github.com/hculpan/go6502/keyboard"
@@ -27,8 +28,120 @@ const (
 	up   = sdl.KEYUP
 )
 
+// EventResult is the event coming back from the event handler
+type EventResult int
+
+const (
+	eventResultNone = iota
+	eventResultQuit
+)
+
+var status *screen.ComputerStatus
+
+func handleEvent(event sdl.Event, em *emulator.Emulator, scr *screen.Screen, k *keyboard.Keyboard) EventResult {
+	if event != nil {
+		switch event.(type) {
+		case *sdl.QuitEvent:
+			ok := dialog.Message("Do you wish to exit?").Title("Exit go6502").YesNo()
+			if ok {
+				em.Terminate()
+				return eventResultQuit
+			}
+		case *sdl.MouseButtonEvent:
+			me := event.(*sdl.MouseButtonEvent)
+			if me.Type == sdl.MOUSEBUTTONDOWN && me.Button == sdl.BUTTON_LEFT {
+				if scr.IsEmulatorOnOffClicked(me.X, me.Y) {
+					toggleEmulatorOnOff(em, scr)
+				}
+			}
+		case *sdl.WindowEvent:
+			we := event.(*sdl.WindowEvent)
+			if we.Data1 != 0 && we.Data2 != 0 {
+				fmt.Println("Window moved!")
+				fmt.Printf("Window position: %d, %d\n", we.Data1, we.Data2)
+				mode, err := sdl.GetDesktopDisplayMode(0)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Printf("Desktop size: %d, %d\n", mode.W, mode.H)
+			}
+		case *sdl.KeyboardEvent:
+			keycode := sdl.GetKeyFromScancode(event.(*sdl.KeyboardEvent).Keysym.Scancode)
+			if event.(*sdl.KeyboardEvent).Type == sdl.KEYDOWN {
+				switch keycode {
+				case sdl.K_F2:
+					toggleEmulatorOnOff(em, scr)
+					scr.UpdateScreen()
+				case sdl.K_F3:
+					if !status.Running {
+						emulatorOnWithStep(em)
+						scr.EnableDebug(em)
+					}
+					scr.UpdateScreen()
+				case sdl.K_F5:
+					if status.Running && !status.SingleStep {
+						em.EnableSingleStep()
+						scr.EnableDebug(em)
+					}
+					scr.UpdateScreen()
+				case sdl.K_F6:
+					if status.Running && status.SingleStep {
+						em.NextStep()
+						time.Sleep(100 * time.Millisecond) // Give emulator a little time to advance to next instruction
+					}
+					scr.UpdateScreen()
+				case sdl.K_F7:
+					if status.Running && status.SingleStep {
+						em.DisableSingleStep()
+						scr.DisableDebug()
+					}
+					scr.UpdateScreen()
+				case sdl.K_F9:
+					filename, err := dialog.File().Filter("TXT files", "txt").Filter("SBIN files", "sbin").Filter("BIN files", "bin").Title("Load ROM File").Load()
+					if err != nil {
+						if strings.Contains(err.Error(), "Cancelled") {
+							break
+						}
+						dialog.Message(fmt.Sprintf("Unable to find %s: %s", filename, err)).Error()
+						return eventResultNone
+					}
+					em.Terminate()
+					em.CPU.Reset()
+					err = loadRAM(filename, em, scr)
+					if err != nil {
+						dialog.Message(fmt.Sprintf("Unable to load %s: %s", filename, err)).Error()
+					}
+					scr.Reset()
+					status.Running = false
+					status.SingleStep = false
+					em.DisableSingleStep()
+					scr.UpdateScreen()
+				case sdl.K_ESCAPE:
+					ok := dialog.Message("Do you wish to exit?").Title("Exit go6502").YesNo()
+					if ok {
+						em.Terminate()
+						return eventResultQuit
+					}
+				default:
+					r := k.ProcessKeyInput(keyboard.NewKeyInputFromEvent(event.(*sdl.KeyboardEvent)))
+					if r != 0 {
+						em.SetKeyWaiting(r)
+					}
+				}
+			} else {
+				r := k.ProcessKeyInput(keyboard.NewKeyInputFromEvent(event.(*sdl.KeyboardEvent)))
+				if r != 0 {
+					em.SetKeyWaiting(r)
+				}
+			}
+		}
+	}
+
+	return eventResultNone
+}
+
 func main() {
-	status := screen.NewComputerStatus()
+	status = screen.NewComputerStatus()
 	scr := screen.NewScreen(textCols, textRows, status)
 	if err := scr.Show(); err != nil {
 		fmt.Println(err)
@@ -48,80 +161,56 @@ func main() {
 		em.Terminate()
 	}()
 
-	// var lastAddress uint16 = 0
 	for {
-		/*		if em.Active {
-				address := em.CPU.PC
-				if address != lastAddress {
-					data := em.ReadMemory(address)
-					s := fmt.Sprintf("%04X:%02X   A:%02X    X:%02X    Y:%02X    SP:%02X\r", address, data, em.CPU.A, em.CPU.X, em.CPU.Y, em.CPU.SP)
-					for _, c := range s {
-						scr.ProcessRune(c)
-					}
-					lastAddress = address
-				}
-			}*/
-		event := sdl.PollEvent()
-		if event != nil {
-			switch event.(type) {
-			case *sdl.QuitEvent:
-				return
-			case *sdl.KeyboardEvent:
-				keycode := sdl.GetKeyFromScancode(event.(*sdl.KeyboardEvent).Keysym.Scancode)
-				if event.(*sdl.KeyboardEvent).Type == sdl.KEYDOWN {
-					switch keycode {
-					case sdl.K_F2:
-						em.StartEmulator()
-						status.Running = true
-					case sdl.K_F3:
-						em.Terminate()
-						em.CPU.Reset()
-						scr.Reset()
-						status.Running = false
-					case sdl.K_F5:
-						em.EnableSingleStep()
-						status.SingleStep = true
-					case sdl.K_F6:
-						em.NextStep()
-					case sdl.K_F7:
-						em.DisableSingleStep()
-						status.SingleStep = false
-					case sdl.K_F9:
-						filename, err := dialog.File().Filter("TXT files", "txt").Filter("SBIN files", "sbin").Filter("BIN files", "bin").Title("Load ROM File").Load()
-						if err != nil {
-							if strings.Contains(err.Error(), "Cancelled") {
-								break
-							}
-							dialog.Message(fmt.Sprintf("Unable to find %s: %s", filename, err)).Error()
-							return
-						}
-						em.Terminate()
-						em.CPU.Reset()
-						err = loadRAM(filename, em, scr)
-						if err != nil {
-							dialog.Message(fmt.Sprintf("Unable to load %s: %s", filename, err)).Error()
-						}
-						scr.Reset()
-						status.Running = false
-					case sdl.K_ESCAPE:
-						ok := dialog.Message("Do you wish to exit?").Title("Exit go6502").YesNo()
-						if ok {
-							return
-						}
-					default:
-						r := k.ProcessKeyInput(keyboard.NewKeyInputFromEvent(event.(*sdl.KeyboardEvent)))
-						if r != 0 {
-							em.SetKeyWaiting(r)
-						}
-					}
-				} else {
-					r := k.ProcessKeyInput(keyboard.NewKeyInputFromEvent(event.(*sdl.KeyboardEvent)))
-					if r != 0 {
-						em.SetKeyWaiting(r)
-					}
-				}
+		eventResult := handleEvent(sdl.PollEvent(), em, scr, k)
+		switch eventResult {
+		case eventResultQuit:
+			return
+		default:
+			if status.Running {
+				em.Step()
 			}
+			scr.DrawScreen()
 		}
+	}
+}
+
+func toggleEmulatorOnOff(em *emulator.Emulator, scr *screen.Screen) {
+	if status.Running {
+		emulatorOff(em, scr)
+	} else {
+		emulatorOn(em)
+	}
+}
+
+func emulatorOn(em *emulator.Emulator) {
+	if !status.Running {
+		em.CPU.Reset()
+		em.DisableSingleStep()
+		status.Running = true
+		status.SingleStep = false
+		em.StartEmulator()
+	}
+}
+
+func emulatorOnWithStep(em *emulator.Emulator) {
+	if !status.Running {
+		em.CPU.Reset()
+		em.EnableSingleStep()
+		status.Running = true
+		status.SingleStep = true
+		em.StartEmulator()
+	}
+}
+
+func emulatorOff(em *emulator.Emulator, scr *screen.Screen) {
+	if status.Running {
+		em.Terminate()
+		em.CPU.Reset()
+		em.DisableSingleStep()
+		scr.Reset()
+		status.Running = false
+		status.SingleStep = false
 	}
 }
 
@@ -172,7 +261,7 @@ func loadROMBin(em *emulator.Emulator, scr *screen.Screen) error {
 		writeToEmulatorMemory(em, uint16(idx), rom[i])
 	}
 
-	scr.SetRomName("rom.bin")
+	status.RomFilename = "rom.bin"
 	return nil
 }
 
@@ -261,7 +350,7 @@ func resetRAM(em *emulator.Emulator) {
 }
 
 func loadRAM(f string, em *emulator.Emulator, scr *screen.Screen) error {
-	scr.SetRomName("")
+	status.RomFilename = ""
 	switch filepath.Ext(f) {
 	case ".bin":
 		if err := loadBIN(f, em); err != nil {
@@ -279,7 +368,7 @@ func loadRAM(f string, em *emulator.Emulator, scr *screen.Screen) error {
 		return fmt.Errorf("Unrecognized file type: %s", filepath.Ext(f))
 	}
 
-	scr.SetRomName(f)
+	status.RomFilename = f
 	return nil
 }
 
