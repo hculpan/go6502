@@ -157,7 +157,7 @@ func (s *Screen) ProcessRune(r rune) {
 // EnableDebug turns on debugging/single step
 func (s *Screen) EnableDebug(em EmulatorInterface) {
 	s.computerStatus.SingleStep = true
-	s.debugScreen.Show(em)
+	s.debugScreen.Show(em, s.computerStatus)
 }
 
 // DisableDebug turns off debugging/single step

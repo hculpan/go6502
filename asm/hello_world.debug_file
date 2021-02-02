@@ -1,0 +1,8 @@
+screen $8000
+message $9004
+start $9013
+start_loop $9015
+start_end $9021
+output_char $9024
+output_char_loop $9025
+irq_handler $f000
