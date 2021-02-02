@@ -35,11 +35,20 @@ type DebugScreen struct {
 	screenHeight int32
 
 	em EmulatorInterface
+
+	lastPC           uint16
+	lastDebugTexture *sdl.Texture
+
+	Active bool
 }
 
 // NewDebugScreen creates a new debug window
 func NewDebugScreen(parent *Screen) *DebugScreen {
-	return &DebugScreen{parent: parent}
+	result := &DebugScreen{parent: parent, Active: false}
+	result.createDebugWindow()
+	result.lastPC = 0
+	result.lastDebugTexture = nil
+	return result
 }
 
 func (s *DebugScreen) initializeFonts() error {
@@ -55,7 +64,7 @@ func (s *DebugScreen) initializeFonts() error {
 	return nil
 }
 
-func (s *DebugScreen) createDebugWindow(parent *Screen) error {
+func (s *DebugScreen) createDebugWindow() error {
 	if err := s.initializeFonts(); err != nil {
 		panic(err)
 	}
@@ -71,7 +80,7 @@ func (s *DebugScreen) createDebugWindow(parent *Screen) error {
 		y,
 		s.screenWidth,
 		s.screenHeight,
-		sdl.WINDOW_ALLOW_HIGHDPI,
+		sdl.WINDOW_ALLOW_HIGHDPI|sdl.WINDOW_HIDDEN,
 	)
 	if err != nil {
 		return err
@@ -84,37 +93,42 @@ func (s *DebugScreen) createDebugWindow(parent *Screen) error {
 	}
 	s.renderer = renderer
 
+	// This is a kludge.  I force it to load all the printable ASCII
+	// characters in the font, and this seems to cause it to print
+	// on the debug screen correctly.  Without this, I get all sorts
+	// weird issues
+	s.initializeSymbols()
+
 	return nil
 }
 
-func (s *DebugScreen) displayDebugInfo() error {
-	if s.window == nil {
+func (s *DebugScreen) displayDebugInfo(renderer *sdl.Renderer) error {
+	if !s.Active {
 		return nil
 	}
 
 	c := s.em.GetCPU()
 
-	renderer, err := s.window.GetRenderer()
-	if err != nil {
-		return nil
+	if s.lastDebugTexture == nil || s.lastPC != s.em.GetCPU().PC {
+		instr := s.em.ReadMemory(c.PC)
+		msg := fmt.Sprintf("Addr:%04X    A:%02X    X:%02X    Y:%02X    SP:%02X    FLAGS:%02X    Instr:%02X", c.PC, c.A, c.X, c.Y, c.SP, c.P, instr)
+		texture, err := createTexture(msg, s.parent.foreground, s.font, renderer)
+		if err != nil {
+			return fmt.Errorf("Creating debug texture: %v", err)
+		} else if texture == nil {
+			return nil
+		}
+		s.lastDebugTexture = texture
+		s.lastPC = s.em.GetCPU().PC
 	}
 
-	instr := s.em.ReadMemory(c.PC)
-	msg := fmt.Sprintf("Addr:%04X   A:%02X    X:%02X    Y:%02X    SP:%02X    FLAGS:%02X    Instr:%02X", c.PC, c.A, c.X, c.Y, c.SP, c.P, instr)
-	texture, err := createTexture(msg, s.parent.foreground, s.font, renderer)
-	if err != nil {
-		return err
-	} else if texture == nil {
-		return nil
-	}
-
-	_, _, w, h, err := texture.Query()
+	_, _, w, h, err := s.lastDebugTexture.Query()
 	if err != nil {
 		return fmt.Errorf("Unable to query texture: %v", err)
 	}
 
 	renderer.Copy(
-		texture,
+		s.lastDebugTexture,
 		&sdl.Rect{X: 0, Y: 0, W: w, H: h},
 		&sdl.Rect{X: 20, Y: 20 + (h / 2), W: w, H: h},
 	)
@@ -124,20 +138,29 @@ func (s *DebugScreen) displayDebugInfo() error {
 
 // DrawScreen draws the entire screen
 func (s *DebugScreen) DrawScreen() {
-	s.renderer.SetDrawColor(s.parent.background.R, s.parent.background.G, s.parent.background.B, s.parent.background.A)
-	s.renderer.Clear()
-
-	if err := s.displayDebugInfo(); err != nil {
+	renderer, err := s.window.GetRenderer()
+	if err != nil {
 		panic(err)
 	}
 
-	s.renderer.Present()
+	renderer.SetDrawColor(s.parent.background.R, s.parent.background.G, s.parent.background.B, s.parent.background.A)
+	renderer.Clear()
+
+	if err := s.displayDebugInfo(renderer); err != nil {
+		panic(err)
+	}
+
+	renderer.Present()
 }
 
 // CleanUp cleans all resources created by the debug window
 func (s *DebugScreen) CleanUp() {
 	if s.window == nil {
 		return
+	}
+
+	if s.lastDebugTexture != nil {
+		s.lastDebugTexture.Destroy()
 	}
 
 	s.font.Close()
@@ -152,15 +175,29 @@ func (s *DebugScreen) CleanUp() {
 
 // Show shows the debug window
 func (s *DebugScreen) Show(em EmulatorInterface) {
-	if s.window == nil {
+	if !s.Active {
+		s.Active = true
 		s.em = em
-		if err := s.createDebugWindow(s.parent); err != nil {
-			panic(err)
-		}
+		s.window.Show()
 	}
 }
 
 // Hide hides the debug window
 func (s *DebugScreen) Hide() {
-	s.CleanUp()
+	if s.Active {
+		s.Active = false
+		s.window.Hide()
+	}
+}
+
+func (s *DebugScreen) initializeSymbols() error {
+	for x := 32; x < 127; x++ {
+		t, err := createTexture(string(rune(x)), s.parent.foreground, s.font, s.renderer)
+		if err != nil {
+			return err
+		}
+		t.Destroy()
+	}
+
+	return nil
 }

@@ -15,6 +15,8 @@ __debug_bin
 *.sbin
 debug.txt
 debugcode.txt
+*.debug_code
+*.debug_file
 
 # Test binary, built with `go test -c`
 *.test

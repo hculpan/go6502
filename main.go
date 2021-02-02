@@ -56,7 +56,13 @@ func handleEvent(event sdl.Event, em *emulator.Emulator, scr *screen.Screen, k *
 			}
 		case *sdl.WindowEvent:
 			we := event.(*sdl.WindowEvent)
-			if we.Data1 != 0 && we.Data2 != 0 {
+			if we.Event == sdl.WINDOWEVENT_CLOSE {
+				ok := dialog.Message("Do you wish to exit?").Title("Exit go6502").YesNo()
+				if ok {
+					em.Terminate()
+					return eventResultQuit
+				}
+			} else if we.Event == sdl.WINDOWEVENT_MOVED {
 				fmt.Println("Window moved!")
 				fmt.Printf("Window position: %d, %d\n", we.Data1, we.Data2)
 				mode, err := sdl.GetDesktopDisplayMode(0)
@@ -74,7 +80,7 @@ func handleEvent(event sdl.Event, em *emulator.Emulator, scr *screen.Screen, k *
 					scr.UpdateScreen()
 				case sdl.K_F3:
 					if !status.Running {
-						emulatorOnWithStep(em)
+						emulatorOnWithStep(em, scr)
 						scr.EnableDebug(em)
 					}
 					scr.UpdateScreen()
@@ -179,11 +185,11 @@ func toggleEmulatorOnOff(em *emulator.Emulator, scr *screen.Screen) {
 	if status.Running {
 		emulatorOff(em, scr)
 	} else {
-		emulatorOn(em)
+		emulatorOn(em, scr)
 	}
 }
 
-func emulatorOn(em *emulator.Emulator) {
+func emulatorOn(em *emulator.Emulator, scr *screen.Screen) {
 	if !status.Running {
 		em.CPU.Reset()
 		em.DisableSingleStep()
@@ -193,7 +199,7 @@ func emulatorOn(em *emulator.Emulator) {
 	}
 }
 
-func emulatorOnWithStep(em *emulator.Emulator) {
+func emulatorOnWithStep(em *emulator.Emulator, scr *screen.Screen) {
 	if !status.Running {
 		em.CPU.Reset()
 		em.EnableSingleStep()
@@ -209,6 +215,7 @@ func emulatorOff(em *emulator.Emulator, scr *screen.Screen) {
 		em.CPU.Reset()
 		em.DisableSingleStep()
 		scr.Reset()
+		scr.DisableDebug()
 		status.Running = false
 		status.SingleStep = false
 	}

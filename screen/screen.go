@@ -94,7 +94,6 @@ func NewScreen(cols int, rows int, status *ComputerStatus) *Screen {
 	s.shiftOn = false
 	s.computerStatus = status
 	s.prevComputerStatus = nil
-	s.debugScreen = NewDebugScreen(s)
 	s.screenDirty = true
 	return s
 }
@@ -163,7 +162,7 @@ func (s *Screen) EnableDebug(em EmulatorInterface) {
 
 // DisableDebug turns off debugging/single step
 func (s *Screen) DisableDebug() {
-	s.computerStatus.SingleStep = true
+	s.computerStatus.SingleStep = false
 	s.debugScreen.Hide()
 }
 
@@ -221,24 +220,9 @@ func (s *Screen) GetWindowPosition() (x, y int32) {
 	return s.window.GetPosition()
 }
 
-func (s *Screen) initSymbolTexture(r rune) (*sdl.Texture, error) {
-	var msg string = string(r)
-	surface, err := s.font.RenderUTF8Solid(msg, s.foreground)
-	if err != nil {
-		return nil, err
-	}
-	defer surface.Free()
-
-	msgtext, err := s.renderer.CreateTextureFromSurface(surface)
-	if err != nil {
-		return nil, err
-	}
-	return msgtext, nil
-}
-
 func (s *Screen) initializeSymbols() error {
 	for x := 32; x < 127; x++ {
-		t, err := s.initSymbolTexture(rune(x))
+		t, err := createTexture(string(rune(x)), s.foreground, s.font, s.renderer)
 		if err != nil {
 			return err
 		}
@@ -449,6 +433,8 @@ func (s *Screen) Show() error {
 
 	s.initEscapeCodes()
 
+	s.debugScreen = NewDebugScreen(s)
+
 	return nil
 }
 
@@ -481,7 +467,6 @@ func (s *Screen) calculateIndexFromScreenLocation(x, y int) int {
 // DrawScreen draws the entire screen
 func (s *Screen) DrawScreen() {
 	if s.screenDirty {
-
 		s.renderer.SetDrawColor(s.background.R, s.background.G, s.background.B, s.background.A)
 		s.renderer.Clear()
 
@@ -504,7 +489,6 @@ func (s *Screen) DrawScreen() {
 		}
 
 		s.renderer.Present()
-
 	}
 
 	if s.computerStatus.SingleStep {

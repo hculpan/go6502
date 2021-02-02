@@ -1,7 +1,9 @@
   .target "65C02"
-  .format "sbin"
+  .format "txt"
 
   .setting "Debug",true
+  .setting "DebugCodeFile","hello_world.debug_code"
+  .setting "DebugFile","hello_world.debug_file"
 
   .org $9000
 

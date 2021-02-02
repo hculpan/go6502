@@ -39,10 +39,6 @@ func getCharacterMetrics(g *ttf.GlyphMetrics) (x, y int32) {
 func createTexture(msg string, c sdl.Color, font *ttf.Font, renderer *sdl.Renderer) (*sdl.Texture, error) {
 	surface, err := font.RenderUTF8Solid(msg, c)
 	if err != nil {
-		if err.Error() == "Text has zero width" {
-			return nil, nil
-		}
-
 		return nil, fmt.Errorf("Unable to create texture surface: %v", err)
 	}
 	defer surface.Free()
