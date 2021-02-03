@@ -9,6 +9,7 @@ import (
 
 	"github.com/hculpan/go6502/keyboard"
 	"github.com/hculpan/go6502/resources"
+	"github.com/hculpan/go6502/utils"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
 )
@@ -25,8 +26,8 @@ type escapeCode struct {
 
 // Screen represents the main object to display text output
 type Screen struct {
-	computerStatus     *ComputerStatus
-	prevComputerStatus *ComputerStatus
+	computerStatus     *utils.ComputerStatus
+	prevComputerStatus *utils.ComputerStatus
 
 	cursor *CursorPos
 
@@ -76,7 +77,7 @@ type Screen struct {
 }
 
 // NewScreen creates a new screen object
-func NewScreen(cols int, rows int, status *ComputerStatus) *Screen {
+func NewScreen(cols int, rows int, status *utils.ComputerStatus) *Screen {
 	s := &Screen{textCols: cols, textRows: rows}
 	s.cursor = NewCursorPos(cols, rows, []rune{95, 0})
 	s.cursorNextSequence = true
@@ -222,7 +223,7 @@ func (s *Screen) GetWindowPosition() (x, y int32) {
 
 func (s *Screen) initializeSymbols() error {
 	for x := 32; x < 127; x++ {
-		t, err := createTexture(string(rune(x)), s.foreground, s.font, s.renderer)
+		t, err := utils.CreateTexture(string(rune(x)), s.foreground, s.font, s.renderer)
 		if err != nil {
 			return err
 		}
@@ -381,14 +382,14 @@ func (s *Screen) initEscapeCodes() {
 }
 
 func (s *Screen) initializeFontStuff() error {
-	font, fontmetrics, err := loadFont("OldComputerManualMonospaced-KmlZ.ttf")
+	font, fontmetrics, err := utils.LoadFont("OldComputerManualMonospaced-KmlZ.ttf")
 	if err != nil {
 		return err
 	}
 	s.font = font
 	s.fontmetrics = fontmetrics
 
-	s.charWidth, s.charHeight = getCharacterMetrics(s.fontmetrics)
+	s.charWidth, s.charHeight = utils.GetCharacterMetrics(s.fontmetrics)
 
 	return nil
 }
@@ -499,12 +500,12 @@ func (s *Screen) DrawScreen() {
 }
 
 func (s *Screen) createBarTexture(msg string) (*sdl.Texture, error) {
-	font, _, err := loadFont("Aileron-Bold.otf")
+	font, _, err := utils.LoadFont("Aileron-Bold.otf")
 	if err != nil {
 		return nil, err
 	}
 
-	texture, err := createTexture(msg, s.foreground, font, s.renderer)
+	texture, err := utils.CreateTexture(msg, s.foreground, font, s.renderer)
 	if err != nil {
 		return nil, err
 	}

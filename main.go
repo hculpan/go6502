@@ -14,6 +14,7 @@ import (
 	"github.com/hculpan/go6502/keyboard"
 	"github.com/hculpan/go6502/resources"
 	"github.com/hculpan/go6502/screen"
+	"github.com/hculpan/go6502/utils"
 	"github.com/sqweek/dialog"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -36,7 +37,7 @@ const (
 	eventResultQuit
 )
 
-var status *screen.ComputerStatus
+var status *utils.ComputerStatus
 
 func handleEvent(event sdl.Event, em *emulator.Emulator, scr *screen.Screen, k *keyboard.Keyboard) EventResult {
 	if event != nil {
@@ -85,11 +86,7 @@ func handleEvent(event sdl.Event, em *emulator.Emulator, scr *screen.Screen, k *
 					}
 					scr.UpdateScreen()
 				case sdl.K_F5:
-					if status.Running && !status.SingleStep {
-						em.EnableSingleStep()
-						scr.EnableDebug(em)
-					}
-					scr.UpdateScreen()
+					emulatorEnableSingleStep(em, scr)
 				case sdl.K_F6:
 					if status.Running && status.SingleStep {
 						em.NextStep()
@@ -97,11 +94,7 @@ func handleEvent(event sdl.Event, em *emulator.Emulator, scr *screen.Screen, k *
 					}
 					scr.UpdateScreen()
 				case sdl.K_F7:
-					if status.Running && status.SingleStep {
-						em.DisableSingleStep()
-						scr.DisableDebug()
-					}
-					scr.UpdateScreen()
+					emulatorDisableSingleStep(em, scr)
 				case sdl.K_F9:
 					filename, err := dialog.File().Filter("TXT files", "txt").Filter("SBIN files", "sbin").Filter("BIN files", "bin").Title("Load ROM File").Load()
 					if err != nil {
@@ -147,7 +140,9 @@ func handleEvent(event sdl.Event, em *emulator.Emulator, scr *screen.Screen, k *
 }
 
 func main() {
-	status = screen.NewComputerStatus()
+	utils.AddBreakpoint(*utils.NewBreakpoint(0x9024, 5))
+
+	status = utils.NewComputerStatus()
 	scr := screen.NewScreen(textCols, textRows, status)
 	if err := scr.Show(); err != nil {
 		fmt.Println(err)
@@ -175,6 +170,12 @@ func main() {
 		default:
 			if status.Running {
 				em.Step()
+				addr := em.CPU.PC
+				breakpoint, found := utils.FindBreakpoint(addr)
+				fmt.Printf("Breakpoint ptr = %p\n", breakpoint)
+				if found && breakpoint.BreakpointReady() {
+					emulatorEnableSingleStep(em, scr)
+				}
 			}
 			scr.DrawScreen()
 		}
@@ -219,6 +220,22 @@ func emulatorOff(em *emulator.Emulator, scr *screen.Screen) {
 		status.Running = false
 		status.SingleStep = false
 	}
+}
+
+func emulatorEnableSingleStep(em *emulator.Emulator, scr *screen.Screen) {
+	if status.Running && !status.SingleStep {
+		em.EnableSingleStep()
+		scr.EnableDebug(em)
+	}
+	scr.UpdateScreen()
+}
+
+func emulatorDisableSingleStep(em *emulator.Emulator, scr *screen.Screen) {
+	if status.Running && status.SingleStep {
+		em.DisableSingleStep()
+		scr.DisableDebug()
+	}
+	scr.UpdateScreen()
 }
 
 func buildKey(r rune, keyAction uint32) *keyboard.KeyInput {

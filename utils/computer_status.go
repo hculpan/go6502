@@ -1,4 +1,4 @@
-package screen
+package utils
 
 // ComputerStatus represents the status of
 // the emulator.  This matches the screen.ComputerStatus

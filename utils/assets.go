@@ -1,4 +1,4 @@
-package screen
+package utils
 
 import (
 	"fmt"
@@ -10,7 +10,9 @@ import (
 
 var count int
 
-func loadFont(filename string) (*ttf.Font, *ttf.GlyphMetrics, error) {
+// LoadFont uses the bindata library to load a font resource
+// embedded within the binary
+func LoadFont(filename string) (*ttf.Font, *ttf.GlyphMetrics, error) {
 	// Load data from bindata in resources/resources.go
 	data, err := resources.Asset("resources/" + filename)
 	if err != nil {
@@ -32,11 +34,14 @@ func loadFont(filename string) (*ttf.Font, *ttf.GlyphMetrics, error) {
 	return font, fontmetrics, nil
 }
 
-func getCharacterMetrics(g *ttf.GlyphMetrics) (x, y int32) {
+// GetCharacterMetrics returns the height/width for
+// character of the given GlyphMetrics
+func GetCharacterMetrics(g *ttf.GlyphMetrics) (h, w int32) {
 	return int32(g.MaxX), int32(g.MaxY + g.Advance)
 }
 
-func createTexture(msg string, c sdl.Color, font *ttf.Font, renderer *sdl.Renderer) (*sdl.Texture, error) {
+// CreateTexture returns a texture for the given message
+func CreateTexture(msg string, c sdl.Color, font *ttf.Font, renderer *sdl.Renderer) (*sdl.Texture, error) {
 	surface, err := font.RenderUTF8Solid(msg, c)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create texture surface: %v", err)

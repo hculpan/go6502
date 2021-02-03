@@ -137,6 +137,11 @@ US	.equ	$2e
 RT	.equ	$2f
 BR	.equ	$40
 	page
+
+
+OUTPUT .equ $8000
+KEYIN  .equ $8001
+
 ;
 ;**********************************************************************
 ; Zero page storage.  Tom seems to be fairly consistant between all of
@@ -167,6 +172,7 @@ LineNumber	.storage	2	;Current Basic line number
 IlPtr		.storage	2	;pointer to current IL statement
 LinePtr		.storage	2	;pointer to/in current user statement
 Source		.storage	2	;source pointer for memory moves
+CharPtr     .storage    1   ;keyboard input buffer
 ;
 ; 0030-007F       Input line buffer & Computation stack
 ;
@@ -193,7 +199,7 @@ Variables	.storage	26*2
 		.org	$b6
 Temp2		.storage	2	;$b6 - Another 16 bit temp
 Dest		.storage	2	;destination for memory moves
-		.storage	2	;$ba - ???
+			.storage	2	;$ba - ???
 Temp1		.storage	2	;$bc temp 16 bit value for many routines
 ;
 ; .if this is non-zero, then we're currently running a BASIC program.
@@ -240,7 +246,7 @@ WARM		jmp	WarmEntry
 ; console/terminal.  In both cases the character is in the A
 ; accumulator, but the subroutine need not preserve the contents of the
 ; other registers.  It is assumed that the character input routine will
-; simultaneously display each character as it is input; .if this is not
+; simultaneously display each character as it is input; if this is not
 ; the case, the jmp instruction in location 0106 may be converted to a
 ; JSR, so that each character input flows through the output subroutine
 ; (which in this case must preserve A) before being fed to TINY.
@@ -255,16 +261,18 @@ WARM		jmp	WarmEntry
 ; these are also readily detected and deleted from the output stream.
 ; Appendix C shows how to perform these tests.
 ;
-	.if	GENERIC
-INCHAR		jmp	INCHAR
-OUTCHAR		jmp	OUTCHAR
-	.endif
-	.if	KIM1
-GETCH		.equ	$1e5a
-OUTCH		.equ	$1ea0
-INCHAR		jmp	GETCH
-OUTCHAR		jmp	OUTCH
-	.endif
+INCHAR		
+			lda KEYIN
+			rts
+
+OUTCHAR:
+			pha
+outchar_loop:
+			lda Output
+			bne outchar_loop			
+			pla
+			sta Output
+			rts
 ;
 ; A third subroutine provided by you is optional, and gives TINY
 ; a means to test for the BREAK condition in your system.  Appendix C
@@ -2205,7 +2213,23 @@ KIMX	rts
 ;
 	end
 
+key_irq_handler:
+  pha
+  lda KEYIN
+  beq end_key 
+  sta CharPtr
+  pha
+key_irq_loop:
+  lda Output
+  bne key_irq_loop
+  pla
+  sta Output
+
+end_key:
+  pla
+  rti
+
 ; End of rom  
   .org $FFFC
   .word $2000
-  .word $0000 ; irq_handler
+  .word key_irq_handler

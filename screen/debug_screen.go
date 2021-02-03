@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ariejan/i6502"
+	"github.com/hculpan/go6502/utils"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
 )
@@ -52,7 +53,7 @@ type DebugScreen struct {
 	lastDebugCodeTexture *sdl.Texture
 	lastStackTexture     *sdl.Texture
 
-	status    *ComputerStatus
+	status    *utils.ComputerStatus
 	debugCode []codeLine
 
 	Active bool
@@ -69,14 +70,14 @@ func NewDebugScreen(parent *Screen) *DebugScreen {
 }
 
 func (s *DebugScreen) initializeFonts() error {
-	font, fontmetrics, err := loadFont("UbuntuMono-B.ttf")
+	font, fontmetrics, err := utils.LoadFont("UbuntuMono-B.ttf")
 	if err != nil {
 		return fmt.Errorf("Error loading font UbuntuMono-B: %v", err)
 	}
 	s.font = font
 	s.fontmetrics = fontmetrics
 
-	s.charWidth, s.charHeight = getCharacterMetrics(s.fontmetrics)
+	s.charWidth, s.charHeight = utils.GetCharacterMetrics(s.fontmetrics)
 
 	return nil
 }
@@ -124,7 +125,7 @@ func (s *DebugScreen) createDebugHeaderTexture(renderer *sdl.Renderer, c *i6502.
 		s.debugHeaderTexure.Destroy()
 	}
 	msg := fmt.Sprintf("           A       X       Y      FLAGS:NVxxDIZC      SP")
-	texture, err := createTexture(msg, s.parent.foreground, s.font, renderer)
+	texture, err := utils.CreateTexture(msg, s.parent.foreground, s.font, renderer)
 	if err != nil {
 		return nil, fmt.Errorf("Error formatting header: %v", err)
 	}
@@ -136,7 +137,7 @@ func (s *DebugScreen) createDebugTexture(renderer *sdl.Renderer, c *i6502.Cpu) (
 		s.lastDebugTexture.Destroy()
 	}
 	msg := fmt.Sprintf("          %02X      %02X      %02X            %08b      %02X", c.A, c.X, c.Y, c.P, c.SP)
-	texture, err := createTexture(msg, s.parent.foreground, s.font, renderer)
+	texture, err := utils.CreateTexture(msg, s.parent.foreground, s.font, renderer)
 	if err != nil {
 		return nil, fmt.Errorf("Creating debug texture: %v", err)
 	}
@@ -219,7 +220,7 @@ func (s *DebugScreen) DrawStack(renderer *sdl.Renderer, em EmulatorInterface) er
 	for i := 0; i < 21; i++ {
 		addr := uint16(segmentAddress) + 0x0100
 		msg := fmt.Sprintf("%04X:%02X", addr, em.ReadMemory(addr))
-		t, err := createTexture(msg, s.parent.foreground, s.font, renderer)
+		t, err := utils.CreateTexture(msg, s.parent.foreground, s.font, renderer)
 		if err != nil {
 			return fmt.Errorf("Error drawing stack: %v", err)
 		}
@@ -330,7 +331,7 @@ func (s *DebugScreen) DrawCodeLines(renderer *sdl.Renderer, PC uint16) error {
 			if idx < startIndex || idx > endIndex || len(s.debugCode[idx].line) == 0 {
 				continue
 			}
-			t, err := createTexture(s.debugCode[idx].line, s.parent.foreground, s.font, renderer)
+			t, err := utils.CreateTexture(s.debugCode[idx].line, s.parent.foreground, s.font, renderer)
 			if err != nil {
 				return fmt.Errorf("Error rendering debug code lines: %v", err)
 			}
@@ -352,6 +353,14 @@ func (s *DebugScreen) DrawCodeLines(renderer *sdl.Renderer, PC uint16) error {
 				&sdl.Rect{X: 0, Y: 0, W: w, H: h},
 				&sdl.Rect{X: s.charWidth, Y: (int32(i) * h), W: w, H: h},
 			)
+
+			if _, found := utils.FindBreakpoint(s.debugCode[idx].address); found {
+				r, g, b, a, _ := renderer.GetDrawColor()
+				renderer.SetDrawColor(200, 0, 0, 255)
+				fmt.Printf("h, w = %d, %d\n", s.charWidth, s.charHeight)
+				renderer.FillRect(&sdl.Rect{X: 1, Y: (int32(i) * h) + 5, W: s.charWidth - 3, H: s.charHeight - 10})
+				renderer.SetDrawColor(r, g, b, a)
+			}
 
 			t.Destroy()
 		}
@@ -437,7 +446,7 @@ func (s *DebugScreen) loadDebugCode() {
 }
 
 // Show shows the debug window
-func (s *DebugScreen) Show(em EmulatorInterface, status *ComputerStatus) {
+func (s *DebugScreen) Show(em EmulatorInterface, status *utils.ComputerStatus) {
 	if !s.Active {
 		s.Active = true
 		s.em = em
@@ -457,7 +466,7 @@ func (s *DebugScreen) Hide() {
 
 func (s *DebugScreen) initializeSymbols() error {
 	for x := 32; x < 127; x++ {
-		t, err := createTexture(string(rune(x)), s.parent.foreground, s.font, s.renderer)
+		t, err := utils.CreateTexture(string(rune(x)), s.parent.foreground, s.font, s.renderer)
 		if err != nil {
 			return err
 		}
