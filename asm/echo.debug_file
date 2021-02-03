@@ -1,0 +1,5 @@
+screen $8000
+key $8001
+start $9004
+key_interrupt $f000
+end_key $f009
